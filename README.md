@@ -24,6 +24,7 @@ git@github.com:songyoungin/kbo-lineup-lab.git
 - Documentation: English.
 - Code comments: English, and only when they clarify non-obvious behavior.
 - User-facing Korean copy may be added separately when the product UI is designed.
+- Python tooling: managed with [uv](https://docs.astral.sh/uv/). Do not use pip, poetry, or pip-tools. The repository root is a uv workspace; run `uv sync` from the root and `uv run <cmd>` for all Python commands.
 
 ## Docs
 
