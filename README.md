@@ -8,6 +8,8 @@ KBO Lineup Lab compares the LG Twins' actual lineup against a data-recommended l
 
 The first MVP focuses on one team, deterministic historical simulation, and explainable metrics rather than real-time gamecast data.
 
+The product requires real KBO data, starting with LG Twins schedules, rosters, lineups, player stats, and box scores. Generic baseball or MLB data is not a substitute for product validation.
+
 ## Repository
 
 Expected GitHub remote:
