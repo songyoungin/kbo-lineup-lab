@@ -57,6 +57,23 @@ cd apps/web && npm run lint
 cd apps/web && npm run format:check
 ```
 
+## Pre-commit
+
+Install hooks once after cloning:
+
+```bash
+uv sync
+uv run pre-commit install
+```
+
+Run all hooks on demand (mirrors what CI runs):
+
+```bash
+uv run pre-commit run --all-files
+```
+
+The same hook set runs automatically in CI via `.github/workflows/pre-commit.yaml` on every pull request targeting `main`.
+
 ## Docs
 
 - [MVP Design](docs/superpowers/specs/2026-05-24-lg-twins-lineup-lab-design.md)

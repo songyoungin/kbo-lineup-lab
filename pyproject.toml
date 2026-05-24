@@ -9,7 +9,10 @@ readme = "README.md"
 package = false
 
 [dependency-groups]
-dev = ["pre-commit>=4"]
+dev = [
+    "detect-secrets>=1.5.0",
+    "pre-commit>=4",
+]
 
 [tool.uv.workspace]
 members = ["apps/api"]
