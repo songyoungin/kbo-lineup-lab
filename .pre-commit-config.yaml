@@ -45,6 +45,9 @@ repos:
         additional_dependencies:
           - fastapi>=0.115
           - httpx>=0.27
+          - sqlalchemy[mypy]>=2.0
+          - alembic>=1.13
+          - pytest>=8
 
   - repo: https://github.com/jendrikseipp/vulture
     rev: v2.16
