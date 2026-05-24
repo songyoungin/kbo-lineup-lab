@@ -1,0 +1,28 @@
+# KBO Lineup Lab
+
+LG Twins lineup analysis dashboard for pregame lineup evaluation and postgame review.
+
+## Concept
+
+KBO Lineup Lab compares the LG Twins' actual lineup against a data-recommended lineup before the game, then grades the decision after the game using box score results.
+
+The first MVP focuses on one team, deterministic historical simulation, and explainable metrics rather than real-time gamecast data.
+
+## Repository
+
+Expected GitHub remote:
+
+```text
+git@github.com:songyoungin/kbo-lineup-lab.git
+```
+
+## Project Conventions
+
+- Commit messages: English Conventional Commits.
+- Documentation: English.
+- Code comments: English, and only when they clarify non-obvious behavior.
+- User-facing Korean copy may be added separately when the product UI is designed.
+
+## Docs
+
+- [MVP Design](docs/superpowers/specs/2026-05-24-lg-twins-lineup-lab-design.md)
