@@ -1,0 +1,74 @@
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-yaml
+      - id: check-json
+      - id: check-toml
+      - id: check-merge-conflict
+      - id: check-case-conflict
+      - id: check-added-large-files
+        exclude: uv\.lock
+      - id: mixed-line-ending
+
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.15.14
+    hooks:
+      - id: ruff
+        args: [--fix, --exit-non-zero-on-fix]
+        files: ^apps/api/.*\.py$
+      - id: ruff-format
+        files: ^apps/api/.*\.py$
+
+  - repo: https://github.com/PyCQA/bandit
+    rev: 1.9.4
+    hooks:
+      - id: bandit
+        args: ["-c", "apps/api/pyproject.toml", "-r", "apps/api/app", "--severity-level", "medium"]
+        files: ^apps/api/app/.*\.py$
+        pass_filenames: false
+
+  - repo: https://github.com/Yelp/detect-secrets
+    rev: v1.5.0
+    hooks:
+      - id: detect-secrets
+        args: [--baseline, .secrets.baseline]
+
+  - repo: https://github.com/pre-commit/mirrors-mypy
+    rev: v2.1.0
+    hooks:
+      - id: mypy
+        files: ^apps/api/.*\.py$
+        args: [--config-file=apps/api/pyproject.toml, --strict, --ignore-missing-imports]
+        additional_dependencies:
+          - fastapi>=0.115
+          - httpx>=0.27
+
+  - repo: https://github.com/jendrikseipp/vulture
+    rev: v2.16
+    hooks:
+      - id: vulture
+        args: ["apps/api/app/", "--min-confidence", "80"]
+
+  - repo: https://github.com/python-jsonschema/check-jsonschema
+    rev: 0.37.2
+    hooks:
+      - id: check-github-workflows
+      - id: check-dependabot
+
+  - repo: local
+    hooks:
+      - id: eslint
+        name: ESLint (apps/web)
+        language: system
+        entry: bash -c 'cd apps/web && npx --no-install eslint'
+        files: ^apps/web/.*\.(js|jsx|ts|tsx)$
+        pass_filenames: false
+      - id: prettier
+        name: Prettier (apps/web)
+        language: system
+        entry: bash -c 'cd apps/web && npx --no-install prettier --check .'
+        files: ^apps/web/.*\.(js|jsx|ts|tsx|json|css|md)$
+        pass_filenames: false

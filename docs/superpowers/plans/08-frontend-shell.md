@@ -28,6 +28,7 @@ Build layout, navigation, API client, and shared visual components. Do not imple
 
 ## Steps
 
+- [ ] Set `<html lang="ko">` in `apps/web/app/layout.tsx`. The scaffold (Plan 01) shipped `lang="en"` as a placeholder; the product UI is Korean-first.
 - [ ] Add `NEXT_PUBLIC_API_BASE_URL` support with default `http://localhost:8000`.
 - [ ] Define TypeScript types matching pregame and postgame API responses.
 - [ ] Build an app shell with compact navigation.

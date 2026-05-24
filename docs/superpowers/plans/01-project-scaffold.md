@@ -16,7 +16,7 @@ Create only the runnable skeleton and the pre-commit / CI gate. Do not implement
 
 ## Files
 
-- Create: `pyproject.toml` (root, uv workspace + pre-commit dev dep)
+- Create: `pyproject.toml` (root, uv workspace + `pre-commit` and `detect-secrets` dev deps)
 - Create: `.gitignore`
 - Create: `.pre-commit-config.yaml`
 - Create: `.secrets.baseline`
@@ -32,16 +32,17 @@ Create only the runnable skeleton and the pre-commit / CI gate. Do not implement
 - Create: `apps/web/app/globals.css`
 - Create: `apps/web/tsconfig.json`
 - Create: `apps/web/next.config.ts`
-- Create: `apps/web/tailwind.config.ts`
 - Create: `apps/web/postcss.config.mjs`
-- Create: `apps/web/.eslintrc.json` (or `eslint.config.mjs` for flat config)
+- Create: `apps/web/eslint.config.mjs` (flat config)
 - Modify: `README.md`
+
+Tailwind v4 (the version `create-next-app@latest` ships) is configured via `@import "tailwindcss"` in `apps/web/app/globals.css` and the `@tailwindcss/postcss` plugin in `apps/web/postcss.config.mjs`. No `tailwind.config.ts` file is created.
 
 ## Steps
 
 ### Backend and frontend scaffold
 
-- [ ] Create root `pyproject.toml` declaring `requires-python = ">=3.13"`, a `[tool.uv.workspace]` table listing `apps/api`, and `pre-commit` as a dev dependency. Mark the root package as non-publishable.
+- [ ] Create root `pyproject.toml` declaring `requires-python = ">=3.13"`, a `[tool.uv.workspace]` table listing `apps/api`, and `pre-commit` plus `detect-secrets` as dev dependencies (both are needed for the gate work in the next section). Mark the root package as non-publishable.
 - [ ] Create a root `.gitignore` covering `.venv/`, `__pycache__/`, `*.pyc`, `node_modules/`, `.next/`, `apps/web/out/`, `.env*`, `*.db`, `.DS_Store`, and `uv.lock` is NOT ignored.
 - [ ] Create `apps/api/pyproject.toml` with `requires-python = ">=3.13"`, FastAPI and pytest dependencies, and `[tool.ruff]`, `[tool.mypy]`, `[tool.bandit]` configuration sections.
 - [ ] Add `GET /health` returning `{"status": "ok"}` in `apps/api/app/main.py`.
@@ -60,9 +61,9 @@ Create only the runnable skeleton and the pre-commit / CI gate. Do not implement
 - [ ] Create `.pre-commit-config.yaml` with these hook groups (resolve `rev:` to the latest stable tag at implementation time):
   - `pre-commit/pre-commit-hooks`: `trailing-whitespace`, `end-of-file-fixer`, `check-yaml`, `check-json`, `check-toml`, `check-merge-conflict`, `check-case-conflict`, `check-added-large-files` (exclude `uv\.lock`), `mixed-line-ending`.
   - `astral-sh/ruff-pre-commit`: `ruff` (with `--fix --exit-non-zero-on-fix`) and `ruff-format`, scoped to `files: ^apps/api/.*\.py$`.
-  - `PyCQA/bandit`: `args: ["-c", "apps/api/pyproject.toml", "-r", "apps/api/app", "--severity-level", "medium"]`, scoped to `files: ^apps/api/app/.*\.py$`.
+  - `PyCQA/bandit`: `args: ["-c", "apps/api/pyproject.toml", "-r", "apps/api/app", "--severity-level", "medium"]`, scoped to `files: ^apps/api/app/.*\.py$`. Set `pass_filenames: false` because the `-r` directory scan is incompatible with per-file invocation.
   - `Yelp/detect-secrets`: `detect-secrets` with `--baseline .secrets.baseline`.
-  - `pre-commit/mirrors-mypy`: scoped to `files: ^apps/api/.*\.py$`, `args: [--config-file=apps/api/pyproject.toml, --strict, --ignore-missing-imports]`, `additional_dependencies: []` (extend later as type stubs become necessary).
+  - `pre-commit/mirrors-mypy`: scoped to `files: ^apps/api/.*\.py$`, `args: [--config-file=apps/api/pyproject.toml, --strict, --ignore-missing-imports]`, `additional_dependencies: ["fastapi>=0.115", "httpx>=0.27"]` so strict mypy can resolve FastAPI decorator types in mypy's isolated venv. Extend this list whenever a new runtime dependency leaks types into `apps/api/app/`.
   - `jendrikseipp/vulture`: `args: ["apps/api/app/", "--min-confidence", "80"]`.
   - `python-jsonschema/check-jsonschema`: `check-github-workflows` and `check-dependabot`.
   - `repo: local` hooks for the frontend: `eslint` and `prettier`, each running `bash -c 'cd apps/web && npx --no-install <tool>'` with `language: system`, `pass_filenames: false`, and `files: ^apps/web/.*\.(js|jsx|ts|tsx|json|css|md)$` (Prettier) / `^apps/web/.*\.(js|jsx|ts|tsx)$` (ESLint).
@@ -80,3 +81,18 @@ Create only the runnable skeleton and the pre-commit / CI gate. Do not implement
 - `uv run pre-commit run --all-files` exits 0.
 - README has local development commands and a pre-commit section.
 - `.github/workflows/pre-commit.yaml` exists and is valid (`check-github-workflows` passes).
+
+## Implementation Notes
+
+Landed on `feat/project-scaffold` as two commits and merged on 2026-05-25:
+
+- `chore(scaffold): initialize api and web apps` — Task 1
+- `chore: add pre-commit and CI gate` — Task 2
+
+Deviations from the original spec, all documented and accepted in review:
+
+- **Tailwind v4 instead of v3.** Captured in the Files list above. The product UI work in Plan 08 will follow the Tailwind v4 CSS-first config style.
+- **mypy `additional_dependencies` populated** with `fastapi>=0.115` and `httpx>=0.27` so strict mypy resolves FastAPI decorator types in mypy's isolated venv. Empty list was not viable for the scaffold.
+- **bandit `pass_filenames: false`.** Required because the `-r apps/api/app` directory scan is incompatible with pre-commit passing individual files.
+- **CI uses `cd apps/web && npm ci`** instead of `npm install --prefix apps/web` for reproducibility against the committed lockfile.
+- **`detect-secrets>=1.5.0` in root dev deps**, required by the `uv run detect-secrets scan` baseline generation step.

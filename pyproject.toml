@@ -1,0 +1,18 @@
+[project]
+name = "kbo-lineup-lab"
+version = "0.0.0"
+requires-python = ">=3.13"
+description = "KBO Lineup Lab workspace root"
+readme = "README.md"
+
+[tool.uv]
+package = false
+
+[dependency-groups]
+dev = [
+    "detect-secrets>=1.5.0",
+    "pre-commit>=4",
+]
+
+[tool.uv.workspace]
+members = ["apps/api"]
