@@ -1,6 +1,8 @@
 import type {
+  GameIngestionStatusResponse,
   GeneratePostgameReviewRequest,
   GeneratePostgameReviewResponse,
+  IngestionRunListResponse,
   LineupComparisonResponse,
   PlayerComparisonResponse,
   PostgameResponse,
@@ -82,5 +84,15 @@ export const api = {
     apiPost<GeneratePostgameReviewRequest, GeneratePostgameReviewResponse>(
       "/api/jobs/generate-postgame-review",
       body
+    ),
+
+  adminIngestionRuns: (limit = 50) =>
+    apiGet<IngestionRunListResponse>(
+      `/api/admin/ingestion-runs?limit=${limit}`
+    ),
+
+  adminGameIngestionStatus: (gameId: number) =>
+    apiGet<GameIngestionStatusResponse>(
+      `/api/admin/games/${gameId}/ingestion-status`
     ),
 };

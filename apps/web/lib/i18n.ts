@@ -3,6 +3,7 @@
 
 import type { StatusTone } from "@/components/status-pill";
 import type {
+  AdminCategoryStatus,
   DifferenceType,
   PerformanceLabel,
   PregameGapLabel,
@@ -49,6 +50,39 @@ export const PERFORMANCE_TONE: Record<PerformanceLabel, StatusTone> = {
   Overperformed: "good",
   Expected: "neutral",
   Underperformed: "danger",
+};
+
+// ---------------------------------------------------------------------------
+// 어드민 수집 상태
+// ---------------------------------------------------------------------------
+
+export const ADMIN_STATUS_KO: Record<AdminCategoryStatus, string> = {
+  waiting: "대기",
+  collected: "수집됨",
+  normalized: "정규화됨",
+  complete: "완료",
+  failed: "실패",
+  needs_review: "검토 필요",
+};
+
+export const ADMIN_STATUS_TONE: Record<AdminCategoryStatus, StatusTone> = {
+  waiting: "neutral",
+  collected: "neutral",
+  normalized: "good",
+  complete: "good",
+  failed: "danger",
+  needs_review: "warning",
+};
+
+export const CATEGORY_KO: Record<string, string> = {
+  schedule: "스케줄",
+  roster: "로스터",
+  player_stats: "선수 스탯",
+  stat_snapshot: "스탯 스냅샷",
+  lineup: "라인업",
+  evaluation: "프리게임 평가",
+  box_score: "박스스코어",
+  postgame_review: "포스트게임 리뷰",
 };
 
 // 백엔드 _pick_gap_label은 소문자 리터럴을 반환합니다 (VERDICT와 별개 맵).
