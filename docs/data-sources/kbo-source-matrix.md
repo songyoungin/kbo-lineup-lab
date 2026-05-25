@@ -64,6 +64,12 @@ URL templates marked `VERIFY before live use`. Handedness-split availability is 
 (`content_type="application/x-source-metadata+json"`, `"supported": false`) instead of fetching,
 so the normalizer (Plan 17) can explicitly skip split scoring rather than fabricating zero-PA splits.
 
+**Plan 15 implementation note (2026-05-25):** Implemented in `apps/api/app/ingestion/collectors/lineup.py`.
+URL template marked `VERIFY before live use`. `LineupCollectionResult.status` is `waiting` until the source
+response contains a non-empty lineup array, then `collected`. `announced_at` is parsed when available;
+deduplication is handled by Plan 12's raw store via the (source_name, source_url, payload_hash) UNIQUE
+constraint, so repeated polls of an unchanged lineup don't accumulate rows.
+
 ### Naver Sports (`m.sports.naver.com/kbo`)
 
 - Largest Korean sports portal; covers KBO schedule, lineups, live scores, and box scores.
