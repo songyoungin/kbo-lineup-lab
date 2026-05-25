@@ -9,8 +9,19 @@ dependencies = [
     "httpx>=0.27",
     "pydantic>=2",
     "sqlalchemy>=2.0",
+    "typer>=0.12",
     "uvicorn[standard]>=0.32",
 ]
+
+[project.scripts]
+kbo-lab = "app.cli:app"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["app"]
 
 [dependency-groups]
 dev = [
@@ -32,6 +43,10 @@ python_version = "3.13"
 strict = true
 ignore_missing_imports = true
 plugins = ["sqlalchemy.ext.mypy.plugin"]
+# typer 데코레이터는 mypy strict에서 misc 오류를 발생시키므로 억제
+[[tool.mypy.overrides]]
+module = ["app.cli"]
+disable_error_code = ["misc"]
 
 [tool.bandit]
 exclude_dirs = ["tests"]

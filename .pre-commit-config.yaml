@@ -49,6 +49,7 @@ repos:
           - sqlalchemy[mypy]>=2.0
           - alembic>=1.13
           - pytest>=8
+          - typer>=0.12
 
   - repo: https://github.com/jendrikseipp/vulture
     rev: v2.16
