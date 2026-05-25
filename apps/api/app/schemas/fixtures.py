@@ -2,17 +2,17 @@
 
 from __future__ import annotations
 
-from datetime import UTC, date, datetime
+from datetime import date, datetime
 from typing import Literal
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
+from app.util.time import to_utc
+
 
 def _to_utc(dt: datetime) -> datetime:
     """tz-aware datetime을 UTC로 정규화한다. naive datetime은 예외를 발생시킨다."""
-    if dt.tzinfo is None:
-        raise ValueError(f"naive datetime not allowed: {dt!r}")
-    return dt.astimezone(UTC)
+    return to_utc(dt)
 
 
 class TeamFixture(BaseModel):
