@@ -18,12 +18,14 @@ from datetime import UTC, datetime
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.lineup_model.lineup_score import compute_lineup_score
 from app.lineup_model.player_score import compute_player_score
 from app.lineup_model.recommendation import generate_recommendation
 from app.lineup_model.types import (
     Handedness,
     HitterStats,
     LineupScoreBreakdown,
+    LineupSlot,
     Position,
 )
 from app.models.evaluation import LineupEvaluationRun, LineupEvaluationSummary, RecommendedLineupRow
@@ -142,6 +144,102 @@ def build_hitter_stats(
         recent_positions=recent_positions,
         starts_last_5_games=_int("starts_last_5_games"),
     )
+
+
+def compute_actual_lineup_score(
+    session: Session,
+    run: LineupEvaluationRun,
+    opp_handedness: Handedness,
+) -> float:
+    """Compute the model score for the actual lineup that was played.
+
+    Runs the actual_lineup_snapshot rows through compute_lineup_score so the
+    result is on the same numeric scale as the recommended lineup score (which
+    is also produced by compute_lineup_score and stored in
+    LineupEvaluationSummary.key_insights_json['recommended_total_score']).
+
+    To ensure every actual-lineup slot is scoreable we synthesise the slot's
+    position into each player's secondary_positions tuple when not already
+    present in primary / secondary / recent.  Without the synthetic addition,
+    compute_player_score would return None for the slot and contribute 0 to
+    the average, deflating the score asymmetrically.
+
+    This helper is shared by the postgame review service so the actual score
+    written to key_insights_json at evaluation time matches what the postgame
+    pipeline expects.
+
+    Args:
+        session: SQLAlchemy session.
+        run: LineupEvaluationRun to score.
+        opp_handedness: Opposing starter's handedness.
+
+    Returns:
+        Total actual lineup score, or 0.0 when no scoreable slots exist.
+    """
+    actual_rows = (
+        session.execute(
+            select(ActualLineupSnapshotRow)
+            .where(ActualLineupSnapshotRow.snapshot_id == run.lineup_snapshot_id)
+            .order_by(ActualLineupSnapshotRow.batting_order)
+        )
+        .scalars()
+        .all()
+    )
+    if not actual_rows:
+        return 0.0
+
+    stat_rows = (
+        session.execute(
+            select(PlayerStatSnapshotRow).where(
+                PlayerStatSnapshotRow.snapshot_id == run.stat_snapshot_id
+            )
+        )
+        .scalars()
+        .all()
+    )
+    stats_json_by_player: dict[int, dict[str, object]] = {
+        r.player_id: r.stats_json for r in stat_rows
+    }
+
+    slots: list[LineupSlot] = []
+    stats_by_player: dict[int, HitterStats] = {}
+    for row in actual_rows:
+        if row.batting_order is None:
+            continue
+        try:
+            pos = Position(row.position)
+        except ValueError:
+            pos = Position.DH
+
+        player = session.get(Player, row.player_id)
+        player_pos = player.position if player is not None else None
+        base_stats = build_hitter_stats(
+            row.player_id, stats_json_by_player.get(row.player_id, {}), player_pos
+        )
+        if (
+            pos != base_stats.primary_position
+            and pos not in base_stats.secondary_positions
+            and pos not in base_stats.recent_positions
+        ):
+            adjusted_stats = base_stats.model_copy(
+                update={"secondary_positions": (*base_stats.secondary_positions, pos)}
+            )
+        else:
+            adjusted_stats = base_stats
+        stats_by_player[row.player_id] = adjusted_stats
+        slots.append(
+            LineupSlot(
+                batting_order=row.batting_order,
+                player_id=row.player_id,
+                position=pos,
+            )
+        )
+
+    if not slots:
+        return 0.0
+
+    breakdown = compute_lineup_score(tuple(slots), stats_by_player, opp_handedness)
+    return breakdown.total_score
 
 
 def _lineup_output_hash(breakdown: LineupScoreBreakdown) -> str:
@@ -277,8 +375,14 @@ def evaluate_lineup_for_run(
     additions = sorted(recommended_ids - actual_player_ids)
     removals = sorted(actual_player_ids - recommended_ids)
 
+    # Compute the actual lineup score once at evaluation time so postgame
+    # reviews and other consumers can read it from key_insights_json without
+    # having to recompute it on every GET.
+    actual_total_score = compute_actual_lineup_score(session, run, opp_handedness)
+
     key_insights: dict[str, object] = {
         "recommended_total_score": recommended.total_score,
+        "actual_total_score": actual_total_score,
         "weighted_player_score": recommended.weighted_player_score,
         "position_completeness_adjustment": recommended.position_completeness_adjustment,
         "handedness_balance_adjustment": recommended.handedness_balance_adjustment,

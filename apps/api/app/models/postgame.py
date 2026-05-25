@@ -7,7 +7,7 @@ Tables defined here:
 
 from datetime import UTC, datetime
 
-from sqlalchemy import JSON, DateTime, ForeignKey, Index, Integer, String, Text
+from sqlalchemy import JSON, DateTime, ForeignKey, Index, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base
@@ -19,6 +19,11 @@ class PostgameReviewRun(Base):
     __tablename__ = "postgame_review_runs"
 
     __table_args__ = (
+        UniqueConstraint(
+            "evaluation_run_id",
+            "box_score_snapshot_id",
+            name="uq_postgame_review_runs_eval_box",
+        ),
         Index("ix_postgame_review_runs_status", "status"),
         Index("ix_postgame_review_runs_evaluation_run_id", "evaluation_run_id"),
         Index("ix_postgame_review_runs_box_score_snapshot_id", "box_score_snapshot_id"),

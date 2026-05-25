@@ -277,6 +277,19 @@ def test_evaluate_lineup_key_insights_contains_score(session: Session) -> None:
     assert isinstance(insights["recommended_total_score"], float)
 
 
+def test_evaluate_lineup_key_insights_contains_actual_total_score(session: Session) -> None:
+    """key_insights_json must contain actual_total_score so postgame review can skip recompute."""
+    run = _seed_evaluation_run(session)
+    evaluate_lineup_for_run(session, run=run)
+    session.commit()
+
+    summary = session.query(LineupEvaluationSummary).filter_by(evaluation_run_id=run.id).one()
+    insights = summary.key_insights_json
+    assert insights is not None
+    assert "actual_total_score" in insights
+    assert isinstance(insights["actual_total_score"], float)
+
+
 def test_evaluate_lineup_opp_handedness_default_noted(session: Session) -> None:
     """key_insights_json must document the opponent handedness default."""
     run = _seed_evaluation_run(session)

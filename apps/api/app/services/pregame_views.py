@@ -10,8 +10,7 @@ from fastapi import HTTPException
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.lineup_model.lineup_score import compute_lineup_score
-from app.lineup_model.types import Handedness, HitterStats, LineupSlot, Position
+from app.lineup_model.types import Handedness
 from app.models.evaluation import LineupEvaluationRun, LineupEvaluationSummary, RecommendedLineupRow
 from app.models.game import Game
 from app.models.player import Player
@@ -33,7 +32,7 @@ from app.schemas.pregame import (
     derive_verdict,
 )
 from app.services.evaluation_runs import get_or_create_evaluation_run
-from app.services.lineup_evaluator import build_hitter_stats, evaluate_lineup_for_run
+from app.services.lineup_evaluator import compute_actual_lineup_score, evaluate_lineup_for_run
 from app.services.snapshot_selector import (
     SnapshotNotFoundError,
     select_lineup_snapshot,
@@ -49,7 +48,7 @@ _UNMODELED_FACTORS: list[str] = [
 ]
 
 # Note surfaced in pregame model_limitations explaining the actual-lineup score
-# method (see _compute_actual_lineup_score docstring).
+# method (see compute_actual_lineup_score in lineup_evaluator.py).
 ACTUAL_SCORE_METHOD_NOTE: str = (
     "Actual lineup score is computed by feeding the announced lineup through "
     "compute_lineup_score with each slot's position synthesised into the "
@@ -180,109 +179,6 @@ def build_team_home(session: Session, team_code: str) -> TeamHomeResponse:
 # ---------------------------------------------------------------------------
 
 
-def _compute_actual_lineup_score(
-    session: Session,
-    run: LineupEvaluationRun,
-) -> float:
-    """Compute the model score for the actual lineup that was played.
-
-    Runs the actual_lineup_snapshot rows through compute_lineup_score so the
-    result is on the same numeric scale as the recommended lineup score
-    (which is also produced by compute_lineup_score and stored in
-    LineupEvaluationSummary.key_insights_json['recommended_total_score']).
-
-    Score parity matters for the verdict bands: without it, the actual score
-    is the raw per-player mean while the recommended score includes batting-
-    order weights, the position-completeness bonus, and the handedness-
-    balance penalty (±2), making the gap meaningless across lineups with
-    different handedness composition.
-
-    To ensure every actual-lineup slot is scoreable we synthesise the slot's
-    position into each player's secondary_positions tuple. Real player-game
-    position data may include slots a player has never played as primary /
-    secondary / recent (e.g. fixture-derived primary_position=DH but the
-    player actually started in CF on game day). Without the synthetic
-    addition, compute_player_score would return None for the slot and
-    contribute 0 to the average, deflating the score asymmetrically. This
-    workaround is documented in the run's key_insights via
-    actual_score_method_note.
-    """
-    # Load actual lineup rows ordered by batting_order
-    actual_rows = (
-        session.execute(
-            select(ActualLineupSnapshotRow)
-            .where(ActualLineupSnapshotRow.snapshot_id == run.lineup_snapshot_id)
-            .order_by(ActualLineupSnapshotRow.batting_order)
-        )
-        .scalars()
-        .all()
-    )
-    if not actual_rows:
-        return 0.0
-
-    # Load stat rows keyed by player_id
-    stat_rows = (
-        session.execute(
-            select(PlayerStatSnapshotRow).where(
-                PlayerStatSnapshotRow.snapshot_id == run.stat_snapshot_id
-            )
-        )
-        .scalars()
-        .all()
-    )
-    stats_json_by_player: dict[int, dict[str, object]] = {
-        r.player_id: r.stats_json for r in stat_rows
-    }
-
-    # Build a slot tuple and a stats map, synthesising the slot position into
-    # each player's secondary_positions so the slot is always scoreable.
-    slots: list[LineupSlot] = []
-    stats_by_player: dict[int, HitterStats] = {}
-    for row in actual_rows:
-        if row.batting_order is None:
-            # Skip rows without a batting order — they cannot map to a slot
-            continue
-        try:
-            pos = Position(row.position)
-        except ValueError:
-            pos = Position.DH
-
-        player = session.get(Player, row.player_id)
-        player_pos = player.position if player is not None else None
-        base_stats = build_hitter_stats(
-            row.player_id, stats_json_by_player.get(row.player_id, {}), player_pos
-        )
-        # Guarantee the actual slot is in the player's eligibility tuple so
-        # compute_player_score returns a non-None breakdown. We add it as a
-        # secondary position when it's not already present in primary /
-        # secondary / recent — this keeps "primary" tier scoring intact while
-        # ensuring scorability.
-        if (
-            pos != base_stats.primary_position
-            and pos not in base_stats.secondary_positions
-            and pos not in base_stats.recent_positions
-        ):
-            adjusted_stats = base_stats.model_copy(
-                update={"secondary_positions": (*base_stats.secondary_positions, pos)}
-            )
-        else:
-            adjusted_stats = base_stats
-        stats_by_player[row.player_id] = adjusted_stats
-        slots.append(
-            LineupSlot(
-                batting_order=row.batting_order,
-                player_id=row.player_id,
-                position=pos,
-            )
-        )
-
-    if not slots:
-        return 0.0
-
-    breakdown = compute_lineup_score(tuple(slots), stats_by_player, Handedness.RIGHT)
-    return breakdown.total_score
-
-
 def build_pregame_view(
     session: Session,
     game_id: int,
@@ -339,8 +235,14 @@ def build_pregame_view(
     _rec_raw = insights.get("recommended_total_score", 0.0)
     recommended_score: float = float(_rec_raw) if isinstance(_rec_raw, (int, float)) else 0.0
 
-    # Compute actual lineup score (score of the players/positions actually played)
-    actual_score = _compute_actual_lineup_score(session, run)
+    # Prefer the actual_total_score stored at evaluation time (Plan 05 writes
+    # this alongside recommended_total_score).  Fall back to recomputing for
+    # legacy runs that predate that field.
+    _actual_raw = insights.get("actual_total_score")
+    if _actual_raw is not None and isinstance(_actual_raw, (int, float)):
+        actual_score = float(_actual_raw)
+    else:
+        actual_score = compute_actual_lineup_score(session, run, Handedness.RIGHT)
 
     score_gap = actual_score - recommended_score
     verdict = derive_verdict(score_gap)
