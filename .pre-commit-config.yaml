@@ -45,6 +45,7 @@ repos:
         additional_dependencies:
           - fastapi>=0.115
           - httpx>=0.27
+          - pydantic>=2
           - sqlalchemy[mypy]>=2.0
           - alembic>=1.13
           - pytest>=8
@@ -53,7 +54,7 @@ repos:
     rev: v2.16
     hooks:
       - id: vulture
-        args: ["apps/api/app/", "--min-confidence", "80"]
+        args: ["apps/api/app/", "--min-confidence", "80", "--ignore-names", "cls"]
 
   - repo: https://github.com/python-jsonschema/check-jsonschema
     rev: 0.37.2
