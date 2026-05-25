@@ -58,6 +58,12 @@
 - `robots.txt` exists — verify before scraping; historically public data is crawlable but terms unclear.
 - **Usage risk:** `medium` — scraping a third-party analytics site. Mitigation: cache aggressively, low frequency (≤1 req/10 s), contact site maintainers if volume grows.
 
+**Plan 14 implementation note (2026-05-25):** Implemented in `apps/api/app/ingestion/collectors/player_stats.py`.
+URL templates marked `VERIFY before live use`. Handedness-split availability is encoded at compile time via
+`SOURCE_SUPPORTS_HANDEDNESS_SPLITS`; when `False` the collector records a marker payload
+(`content_type="application/x-source-metadata+json"`, `"supported": false`) instead of fetching,
+so the normalizer (Plan 17) can explicitly skip split scoring rather than fabricating zero-PA splits.
+
 ### Naver Sports (`m.sports.naver.com/kbo`)
 
 - Largest Korean sports portal; covers KBO schedule, lineups, live scores, and box scores.
