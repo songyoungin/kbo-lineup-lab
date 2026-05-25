@@ -77,3 +77,4 @@ The same hook set runs automatically in CI via `.github/workflows/pre-commit.yam
 ## Docs
 
 - [MVP Design](docs/superpowers/specs/2026-05-24-lg-twins-lineup-lab-design.md)
+- [KBO Source Matrix](docs/data-sources/kbo-source-matrix.md)
