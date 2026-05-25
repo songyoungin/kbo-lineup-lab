@@ -20,6 +20,14 @@ export type DifferenceType =
 
 export type PerformanceLabel = "Overperformed" | "Expected" | "Underperformed";
 
+// 백엔드 _pick_gap_label은 소문자 리터럴 4종을 반환합니다.
+// VERDICT와 의미는 동일하나 케이스가 달라 별도 타입으로 분리.
+export type PregameGapLabel =
+  | "nearly optimal"
+  | "acceptable"
+  | "questionable"
+  | "low offensive efficiency";
+
 // ---------------------------------------------------------------------------
 // Team home
 // ---------------------------------------------------------------------------
@@ -155,7 +163,7 @@ export interface PostgameResponse {
   pregame_actual_score: number;
   pregame_recommended_score: number;
   pregame_score_gap: number;
-  pregame_gap_label: string;
+  pregame_gap_label: PregameGapLabel;
   overperformers: PostgamePlayerLine[];
   underperformers: PostgamePlayerLine[];
   other_actual: PostgamePlayerLine[];

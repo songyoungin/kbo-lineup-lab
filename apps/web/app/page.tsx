@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { ApiError, api } from "@/lib/api";
 import { MOCK_TEAM_HOME } from "@/lib/mock";
 import type { TeamHomeResponse, Verdict } from "@/lib/types";
@@ -109,6 +110,22 @@ export default async function TeamHomePage() {
                   <StatusPill tone={pipelineTone(status)}>{status}</StatusPill>
                 </div>
               ))}
+            </div>
+
+            {/* 분석 페이지 링크 */}
+            <div className="flex gap-3 pt-1">
+              <Link
+                href={`/games/${today.game_id}/pregame`}
+                className="text-xs text-zinc-500 hover:text-zinc-800 underline underline-offset-2 transition-colors"
+              >
+                프리게임 평가
+              </Link>
+              <Link
+                href={`/games/${today.game_id}/postgame`}
+                className="text-xs text-zinc-500 hover:text-zinc-800 underline underline-offset-2 transition-colors"
+              >
+                포스트게임 리뷰
+              </Link>
             </div>
           </div>
         </section>

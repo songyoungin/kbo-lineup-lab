@@ -1,4 +1,5 @@
 import { notFound } from "next/navigation";
+import Link from "next/link";
 import { ApiError, api } from "@/lib/api";
 import { LineupScoreSummary } from "@/components/pregame/lineup-score-summary";
 import { LineupComparisonTable } from "@/components/pregame/lineup-comparison-table";
@@ -60,9 +61,17 @@ export default async function PregamePage({
   return (
     <div className="space-y-6 max-w-4xl">
       {/* 헤더 */}
-      <header>
-        <h1 className="text-xl font-bold text-zinc-900">프리게임 평가</h1>
-        <p className="text-sm text-zinc-500">Game #{gameId}</p>
+      <header className="flex items-start justify-between">
+        <div>
+          <h1 className="text-xl font-bold text-zinc-900">프리게임 평가</h1>
+          <p className="text-sm text-zinc-500">Game #{gameId}</p>
+        </div>
+        <Link
+          href={`/games/${gameId}/postgame`}
+          className="text-xs text-zinc-500 hover:text-zinc-700 underline underline-offset-2 transition-colors"
+        >
+          포스트게임 리뷰 보기 →
+        </Link>
       </header>
 
       {/* 점수 요약 */}
