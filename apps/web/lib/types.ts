@@ -173,6 +173,48 @@ export interface PostgameResponse {
 }
 
 // ---------------------------------------------------------------------------
+// Admin ingestion status
+// ---------------------------------------------------------------------------
+
+export type AdminCategoryStatus =
+  | "waiting"
+  | "collected"
+  | "normalized"
+  | "complete"
+  | "failed"
+  | "needs_review";
+
+export interface CategoryStatusResponse {
+  category: string;
+  status: AdminCategoryStatus;
+  raw_payload_id: number | null;
+  snapshot_id: number | null;
+  run_id: number | null;
+  error_message: string | null;
+}
+
+export interface GameIngestionStatusResponse {
+  game_id: number;
+  game_external_id: string;
+  game_date: string;
+  categories: CategoryStatusResponse[];
+}
+
+export interface IngestionRunSummary {
+  id: number;
+  source: string;
+  status: string;
+  started_at: string | null;
+  finished_at: string | null;
+  error_message: string | null;
+  created_at: string;
+}
+
+export interface IngestionRunListResponse {
+  runs: IngestionRunSummary[];
+}
+
+// ---------------------------------------------------------------------------
 // Job requests / responses
 // ---------------------------------------------------------------------------
 

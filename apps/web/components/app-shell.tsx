@@ -28,7 +28,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             포스트게임 리뷰
           </Link>
           <Link
-            href="/admin"
+            href="/admin/ingestion"
             className="block px-2 py-1.5 rounded text-zinc-700 hover:bg-zinc-100 hover:text-zinc-900 transition-colors"
           >
             파이프라인 상태
