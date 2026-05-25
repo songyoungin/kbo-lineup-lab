@@ -8,6 +8,7 @@ Tables defined here:
 - actual_lineup_snapshot_rows
 - box_score_snapshots
 - box_score_rows
+- raw_ingestion_payloads
 """
 
 from datetime import UTC, datetime
@@ -201,3 +202,46 @@ class BoxScoreRow(Base):
     extra_stats_json: Mapped[dict[str, object] | None] = mapped_column(JSON, nullable=True)
     # Pitcher-specific: innings pitched stored as float (e.g. 6.2 = 6⅔)
     innings_pitched: Mapped[float | None] = mapped_column(Float, nullable=True)
+
+
+class RawIngestionPayload(Base):
+    """Immutable raw payload fetched from an external KBO data source.
+
+    Collectors write rows here BEFORE parsing. Normalizers (Plan 17) consume
+    these rows to populate validated domain tables. Storing the raw body lets
+    us replay against new parser versions without re-fetching.
+    """
+
+    __tablename__ = "raw_ingestion_payloads"
+
+    __table_args__ = (
+        UniqueConstraint(
+            "source_name",
+            "source_url",
+            "payload_hash",
+            name="uq_raw_ingestion_payloads_source_url_hash",
+        ),
+        Index("ix_raw_ingestion_payloads_category", "category"),
+        Index("ix_raw_ingestion_payloads_fetched_at", "fetched_at"),
+        Index("ix_raw_ingestion_payloads_ingestion_run_id", "ingestion_run_id"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    ingestion_run_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("ingestion_runs.id"), nullable=False
+    )
+    # One of: "schedule" / "roster" / "player_stats" / "lineup" / "box_score"
+    category: Mapped[str] = mapped_column(String(32), nullable=False)
+    # Source identifier (e.g. "kbo_official", "statiz", "naver_sports")
+    source_name: Mapped[str] = mapped_column(String(64), nullable=False)
+    source_url: Mapped[str] = mapped_column(String(1024), nullable=False)
+    fetched_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    content_type: Mapped[str] = mapped_column(String(128), nullable=False)
+    payload_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    # The actual fetched body (HTML/JSON/etc.) preserved verbatim
+    raw_body: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(UTC),
+        nullable=False,
+    )
