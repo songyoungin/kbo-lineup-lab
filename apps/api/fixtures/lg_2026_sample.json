@@ -1,0 +1,84 @@
+{
+  "schema_version": 1,
+  "teams": [
+    {"code": "LG", "name": "LG Twins"},
+    {"code": "DOO", "name": "Doosan Bears"}
+  ],
+  "players": [
+    {"external_id": "LG-P001", "team_code": "LG", "name": "Hong Gildong 1", "position": "CF"},
+    {"external_id": "LG-P002", "team_code": "LG", "name": "Hong Gildong 2", "position": "SS"},
+    {"external_id": "LG-P003", "team_code": "LG", "name": "Hong Gildong 3", "position": "1B"},
+    {"external_id": "LG-P004", "team_code": "LG", "name": "Hong Gildong 4", "position": "3B"},
+    {"external_id": "LG-P005", "team_code": "LG", "name": "Hong Gildong 5", "position": "LF"},
+    {"external_id": "LG-P006", "team_code": "LG", "name": "Hong Gildong 6", "position": "RF"},
+    {"external_id": "LG-P007", "team_code": "LG", "name": "Hong Gildong 7", "position": "2B"},
+    {"external_id": "LG-P008", "team_code": "LG", "name": "Hong Gildong 8", "position": "C"},
+    {"external_id": "LG-P009", "team_code": "LG", "name": "Hong Gildong 9", "position": "DH"},
+    {"external_id": "LG-P010", "team_code": "LG", "name": "Hong Gildong 10", "position": "LF"},
+    {"external_id": "LG-P011", "team_code": "LG", "name": "Hong Gildong 11", "position": "3B"},
+    {"external_id": "LG-P012", "team_code": "LG", "name": "Hong Gildong 12", "position": "1B"},
+    {"external_id": "DOO-P001", "team_code": "DOO", "name": "Kim Cheolsu 1", "position": "SP"}
+  ],
+  "game": {
+    "external_id": "KBO-2026-LG-DOO-001",
+    "game_date": "2026-04-15",
+    "home_team_code": "LG",
+    "away_team_code": "DOO",
+    "venue": "Jamsil Baseball Stadium"
+  },
+  "ingestion": {
+    "source": "fixture:lg_2026_sample",
+    "started_at": "2026-04-15T08:00:00+09:00",
+    "finished_at": "2026-04-15T08:00:05+09:00"
+  },
+  "stat_snapshot": {
+    "snapshot_at": "2026-04-15T16:00:00+09:00",
+    "rows": [
+      {"player_external_id": "LG-P001", "stats": {"AB": 250, "H": 80, "OBP": 0.380, "SLG": 0.500, "OPS": 0.880, "AVG": 0.320, "HR": 12, "RBI": 55}},
+      {"player_external_id": "LG-P002", "stats": {"AB": 235, "H": 72, "OBP": 0.350, "SLG": 0.430, "OPS": 0.780, "AVG": 0.306, "HR": 7, "RBI": 40}},
+      {"player_external_id": "LG-P003", "stats": {"AB": 260, "H": 88, "OBP": 0.400, "SLG": 0.550, "OPS": 0.950, "AVG": 0.338, "HR": 18, "RBI": 68}},
+      {"player_external_id": "LG-P004", "stats": {"AB": 240, "H": 70, "OBP": 0.340, "SLG": 0.460, "OPS": 0.800, "AVG": 0.292, "HR": 10, "RBI": 48}},
+      {"player_external_id": "LG-P005", "stats": {"AB": 230, "H": 65, "OBP": 0.320, "SLG": 0.410, "OPS": 0.730, "AVG": 0.283, "HR": 6, "RBI": 35}},
+      {"player_external_id": "LG-P006", "stats": {"AB": 245, "H": 78, "OBP": 0.370, "SLG": 0.510, "OPS": 0.880, "AVG": 0.318, "HR": 15, "RBI": 60}},
+      {"player_external_id": "LG-P007", "stats": {"AB": 220, "H": 60, "OBP": 0.310, "SLG": 0.380, "OPS": 0.690, "AVG": 0.273, "HR": 4, "RBI": 28}},
+      {"player_external_id": "LG-P008", "stats": {"AB": 200, "H": 55, "OBP": 0.300, "SLG": 0.400, "OPS": 0.700, "AVG": 0.275, "HR": 8, "RBI": 38}},
+      {"player_external_id": "LG-P009", "stats": {"AB": 255, "H": 82, "OBP": 0.390, "SLG": 0.520, "OPS": 0.910, "AVG": 0.322, "HR": 16, "RBI": 62}},
+      {"player_external_id": "LG-P010", "stats": {"AB": 180, "H": 48, "OBP": 0.290, "SLG": 0.360, "OPS": 0.650, "AVG": 0.267, "HR": 3, "RBI": 22}},
+      {"player_external_id": "LG-P011", "stats": {"AB": 195, "H": 58, "OBP": 0.330, "SLG": 0.430, "OPS": 0.760, "AVG": 0.297, "HR": 9, "RBI": 42}},
+      {"player_external_id": "LG-P012", "stats": {"AB": 210, "H": 62, "OBP": 0.345, "SLG": 0.450, "OPS": 0.795, "AVG": 0.295, "HR": 11, "RBI": 50}}
+    ]
+  },
+  "actual_lineup_snapshot": {
+    "team_code": "LG",
+    "announced_at": "2026-04-15T17:30:00+09:00",
+    "rows": [
+      {"batting_order": 1, "player_external_id": "LG-P001", "position": "CF"},
+      {"batting_order": 2, "player_external_id": "LG-P002", "position": "SS"},
+      {"batting_order": 3, "player_external_id": "LG-P003", "position": "1B"},
+      {"batting_order": 4, "player_external_id": "LG-P009", "position": "DH"},
+      {"batting_order": 5, "player_external_id": "LG-P006", "position": "RF"},
+      {"batting_order": 6, "player_external_id": "LG-P004", "position": "3B"},
+      {"batting_order": 7, "player_external_id": "LG-P005", "position": "LF"},
+      {"batting_order": 8, "player_external_id": "LG-P007", "position": "2B"},
+      {"batting_order": 9, "player_external_id": "LG-P008", "position": "C"}
+    ]
+  },
+  "box_score_snapshot": {
+    "taken_at": "2026-04-15T22:30:00+09:00",
+    "rows": [
+      {"player_external_id": "LG-P001", "at_bats": 4, "hits": 2, "runs": 1, "rbis": 1, "extra_stats_json": {"BB": 0, "SO": 1}, "innings_pitched": null},
+      {"player_external_id": "LG-P002", "at_bats": 4, "hits": 1, "runs": 0, "rbis": 0, "extra_stats_json": {"BB": 0, "SO": 2}, "innings_pitched": null},
+      {"player_external_id": "LG-P003", "at_bats": 3, "hits": 2, "runs": 2, "rbis": 3, "extra_stats_json": {"BB": 1, "SO": 0}, "innings_pitched": null},
+      {"player_external_id": "LG-P004", "at_bats": 4, "hits": 1, "runs": 0, "rbis": 1, "extra_stats_json": {"BB": 0, "SO": 1}, "innings_pitched": null},
+      {"player_external_id": "LG-P005", "at_bats": 4, "hits": 0, "runs": 0, "rbis": 0, "extra_stats_json": {"BB": 0, "SO": 3}, "innings_pitched": null},
+      {"player_external_id": "LG-P006", "at_bats": 3, "hits": 2, "runs": 1, "rbis": 2, "extra_stats_json": {"BB": 1, "SO": 0}, "innings_pitched": null},
+      {"player_external_id": "LG-P007", "at_bats": 4, "hits": 1, "runs": 1, "rbis": 0, "extra_stats_json": {"BB": 0, "SO": 1}, "innings_pitched": null},
+      {"player_external_id": "LG-P008", "at_bats": 3, "hits": 1, "runs": 0, "rbis": 1, "extra_stats_json": {"BB": 0, "SO": 1}, "innings_pitched": null},
+      {"player_external_id": "LG-P009", "at_bats": 4, "hits": 2, "runs": 2, "rbis": 2, "extra_stats_json": {"BB": 0, "SO": 0}, "innings_pitched": null},
+      {"player_external_id": "LG-P010", "at_bats": 1, "hits": 0, "runs": 0, "rbis": 0, "extra_stats_json": {"BB": 0, "SO": 1}, "innings_pitched": null},
+      {"player_external_id": "LG-P011", "at_bats": 1, "hits": 1, "runs": 1, "rbis": 0, "extra_stats_json": {"BB": 0, "SO": 0}, "innings_pitched": null},
+      {"player_external_id": "LG-P012", "at_bats": 1, "hits": 0, "runs": 0, "rbis": 0, "extra_stats_json": {"BB": 0, "SO": 1}, "innings_pitched": null},
+      {"player_external_id": "DOO-P001", "at_bats": null, "hits": null, "runs": null, "rbis": null, "extra_stats_json": {"K": 6, "BB": 3, "ER": 5}, "innings_pitched": 5.2}
+    ]
+  }
+}
