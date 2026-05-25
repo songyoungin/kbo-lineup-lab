@@ -326,12 +326,12 @@ def test_evaluate_lineup_re_run_does_not_duplicate_rows(session: Session) -> Non
 
 
 def test_build_hitter_stats_raises_typeerror_on_non_numeric(session: Session) -> None:
-    """_build_hitter_stats must raise TypeError when stats_json holds non-numeric data.
+    """build_hitter_stats must raise TypeError when stats_json holds non-numeric data.
 
     Uses a non-numeric OPS value (a list) to trigger the explicit type check
     in _float. The error message must include the offending key and player id.
     """
-    from app.services.lineup_evaluator import _build_hitter_stats
+    from app.services.lineup_evaluator import build_hitter_stats
 
     bad_stats: dict[str, object] = {
         "OPS": [0.9],  # not numeric
@@ -339,7 +339,7 @@ def test_build_hitter_stats_raises_typeerror_on_non_numeric(session: Session) ->
         "SLG": 0.450,
     }
     with pytest.raises(TypeError) as exc_info:
-        _build_hitter_stats(42, bad_stats, "1B")
+        build_hitter_stats(42, bad_stats, "1B")
 
     msg = str(exc_info.value)
     assert "OPS" in msg

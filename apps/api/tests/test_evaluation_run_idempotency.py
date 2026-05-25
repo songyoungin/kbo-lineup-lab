@@ -133,7 +133,7 @@ def test_get_or_create_inserts_when_absent(session: Session) -> None:
     """First call creates a row with status='pending' and populated manifest/hash."""
     ids = _seed_all(session)
 
-    run = get_or_create_evaluation_run(
+    run, created = get_or_create_evaluation_run(
         session,
         game_id=ids["game_id"],
         team_id=ids["team_id"],
@@ -143,6 +143,7 @@ def test_get_or_create_inserts_when_absent(session: Session) -> None:
         model_version_id=ids["model_version_id"],
     )
 
+    assert created is True
     assert run.id is not None
     assert run.status == "pending"
     assert run.input_manifest_json is not None
@@ -156,7 +157,7 @@ def test_get_or_create_returns_existing_when_present(session: Session) -> None:
     """Second call with identical 6-tuple returns the SAME row id, no duplicate."""
     ids = _seed_all(session)
 
-    run1 = get_or_create_evaluation_run(
+    run1, created1 = get_or_create_evaluation_run(
         session,
         game_id=ids["game_id"],
         team_id=ids["team_id"],
@@ -165,7 +166,7 @@ def test_get_or_create_returns_existing_when_present(session: Session) -> None:
         lineup_snapshot_id=ids["lineup_snapshot_id"],
         model_version_id=ids["model_version_id"],
     )
-    run2 = get_or_create_evaluation_run(
+    run2, created2 = get_or_create_evaluation_run(
         session,
         game_id=ids["game_id"],
         team_id=ids["team_id"],
@@ -176,6 +177,8 @@ def test_get_or_create_returns_existing_when_present(session: Session) -> None:
     )
 
     assert run1.id == run2.id
+    assert created1 is True
+    assert created2 is False
 
     # Confirm only one row exists in DB
     rows = session.query(LineupEvaluationRun).all()
@@ -186,7 +189,7 @@ def test_different_cutoff_creates_new_run(session: Session) -> None:
     """Different evaluation_cutoff_at must produce a distinct new row."""
     ids = _seed_all(session)
 
-    run1 = get_or_create_evaluation_run(
+    run1, _ = get_or_create_evaluation_run(
         session,
         game_id=ids["game_id"],
         team_id=ids["team_id"],
@@ -195,7 +198,7 @@ def test_different_cutoff_creates_new_run(session: Session) -> None:
         lineup_snapshot_id=ids["lineup_snapshot_id"],
         model_version_id=ids["model_version_id"],
     )
-    run2 = get_or_create_evaluation_run(
+    run2, _ = get_or_create_evaluation_run(
         session,
         game_id=ids["game_id"],
         team_id=ids["team_id"],
@@ -220,7 +223,7 @@ def test_different_model_version_creates_new_run(session: Session) -> None:
     session.add(mv2)
     session.flush()
 
-    run1 = get_or_create_evaluation_run(
+    run1, _ = get_or_create_evaluation_run(
         session,
         game_id=ids["game_id"],
         team_id=ids["team_id"],
@@ -229,7 +232,7 @@ def test_different_model_version_creates_new_run(session: Session) -> None:
         lineup_snapshot_id=ids["lineup_snapshot_id"],
         model_version_id=ids["model_version_id"],
     )
-    run2 = get_or_create_evaluation_run(
+    run2, _ = get_or_create_evaluation_run(
         session,
         game_id=ids["game_id"],
         team_id=ids["team_id"],
@@ -437,7 +440,7 @@ def test_get_or_create_stores_model_config(session: Session) -> None:
     """model_config_json is stored when model_config is provided."""
     ids = _seed_all(session)
 
-    run = get_or_create_evaluation_run(
+    run, _ = get_or_create_evaluation_run(
         session,
         game_id=ids["game_id"],
         team_id=ids["team_id"],
@@ -484,7 +487,7 @@ def test_get_or_create_returns_existing_for_non_utc_cutoff(session: Session) -> 
 
     # First call: UTC cutoff at 2026-04-15T08:00:00Z
     cutoff_utc = datetime(2026, 4, 15, 8, 0, 0, tzinfo=UTC)
-    run1 = get_or_create_evaluation_run(
+    run1, _ = get_or_create_evaluation_run(
         session,
         game_id=ids["game_id"],
         team_id=ids["team_id"],
@@ -497,7 +500,7 @@ def test_get_or_create_returns_existing_for_non_utc_cutoff(session: Session) -> 
     # Second call: EST cutoff representing the SAME instant (03:00-05:00)
     est = timezone(timedelta(hours=-5))
     cutoff_est = datetime(2026, 4, 15, 3, 0, 0, tzinfo=est)
-    run2 = get_or_create_evaluation_run(
+    run2, _ = get_or_create_evaluation_run(
         session,
         game_id=ids["game_id"],
         team_id=ids["team_id"],
