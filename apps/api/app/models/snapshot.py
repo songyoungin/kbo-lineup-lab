@@ -33,7 +33,10 @@ class IngestionRun(Base):
 
     __tablename__ = "ingestion_runs"
 
-    __table_args__ = (Index("ix_ingestion_runs_status", "status"),)
+    __table_args__ = (
+        UniqueConstraint("source", name="uq_ingestion_runs_source"),
+        Index("ix_ingestion_runs_status", "status"),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True)
     source: Mapped[str] = mapped_column(String(64), nullable=False)
@@ -54,6 +57,7 @@ class StatSnapshot(Base):
     __tablename__ = "stat_snapshots"
 
     __table_args__ = (
+        UniqueConstraint("content_hash", name="uq_stat_snapshots_content_hash"),
         Index("ix_stat_snapshots_snapshot_at", "snapshot_at"),
         Index("ix_stat_snapshots_ingestion_run_id", "ingestion_run_id"),
     )
@@ -154,6 +158,7 @@ class BoxScoreSnapshot(Base):
     __tablename__ = "box_score_snapshots"
 
     __table_args__ = (
+        UniqueConstraint("content_hash", name="uq_box_score_snapshots_content_hash"),
         Index("ix_box_score_snapshots_taken_at", "taken_at"),
         Index("ix_box_score_snapshots_game_id", "game_id"),
         Index("ix_box_score_snapshots_ingestion_run_id", "ingestion_run_id"),
