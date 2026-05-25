@@ -14,14 +14,15 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           >
             팀 홈
           </Link>
+          {/* MVP: 픽스처 게임 ID(1)로 직접 링크 — 실제 게임 선택 UI는 추후 추가 */}
           <Link
-            href="/pregame"
+            href="/games/1/pregame"
             className="block px-2 py-1.5 rounded text-zinc-700 hover:bg-zinc-100 hover:text-zinc-900 transition-colors"
           >
             프리게임 평가
           </Link>
           <Link
-            href="/postgame"
+            href="/games/1/postgame"
             className="block px-2 py-1.5 rounded text-zinc-700 hover:bg-zinc-100 hover:text-zinc-900 transition-colors"
           >
             포스트게임 리뷰
