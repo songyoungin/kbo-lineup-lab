@@ -70,6 +70,12 @@ response contains a non-empty lineup array, then `collected`. `announced_at` is 
 deduplication is handled by Plan 12's raw store via the (source_name, source_url, payload_hash) UNIQUE
 constraint, so repeated polls of an unchanged lineup don't accumulate rows.
 
+**Plan 16 implementation note (2026-05-25):** Implemented in `apps/api/app/ingestion/collectors/box_score.py`.
+URL template marked `VERIFY before live use`. `BoxScoreCollectionResult.status` is `waiting` until the source
+response indicates a final game (`gameStatus=FINAL` in JSON or `FINAL`/`경기종료` substring fallback for HTML).
+`FinalScore` parsing is optional — collector returns whatever the source exposes, including partial scores
+for in-progress games.
+
 ### Naver Sports (`m.sports.naver.com/kbo`)
 
 - Largest Korean sports portal; covers KBO schedule, lineups, live scores, and box scores.
