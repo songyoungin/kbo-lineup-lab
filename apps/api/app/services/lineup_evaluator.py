@@ -31,7 +31,7 @@ from app.models.player import Player
 from app.models.snapshot import ActualLineupSnapshotRow, PlayerStatSnapshotRow
 
 
-def _build_hitter_stats(
+def build_hitter_stats(
     player_id: int,
     stats_json: dict[str, object],
     player_position: str | None = None,
@@ -221,7 +221,7 @@ def evaluate_lineup_for_run(
 
     eligible: list[HitterStats] = []
     for stat_row, player in stat_rows:
-        stats = _build_hitter_stats(player.id, stat_row.stats_json, player.position)
+        stats = build_hitter_stats(player.id, stat_row.stats_json, player.position)
         eligible.append(stats)
 
     # ------------------------------------------------------------------

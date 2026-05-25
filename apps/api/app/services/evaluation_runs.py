@@ -27,7 +27,7 @@ def get_or_create_evaluation_run(
     lineup_snapshot_id: int,
     model_version_id: int,
     model_config: Mapping[str, object] | None = None,
-) -> LineupEvaluationRun:
+) -> tuple[LineupEvaluationRun, bool]:
     """Return the existing evaluation run for the idempotency key, or create one.
 
     Idempotency key: (game_id, team_id, evaluation_cutoff_at, stat_snapshot_id,
@@ -52,7 +52,8 @@ def get_or_create_evaluation_run(
         model_config: Optional model configuration dict stored alongside the run.
 
     Returns:
-        Existing or newly created LineupEvaluationRun.
+        Tuple of (run, created) where created is True if the row was newly
+        inserted, False if an existing row was returned.
 
     Raises:
         ValueError: If evaluation_cutoff_at is naive (propagated from to_utc).
@@ -79,7 +80,7 @@ def get_or_create_evaluation_run(
     )
 
     if existing is not None:
-        return existing
+        return existing, False
 
     manifest = build_manifest(
         game_id=game_id,
@@ -106,4 +107,4 @@ def get_or_create_evaluation_run(
     )
     session.add(run)
     session.flush()
-    return run
+    return run, True
