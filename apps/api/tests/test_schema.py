@@ -7,6 +7,7 @@ Verifies:
 - Required indexes exist on the expected columns
 """
 
+import itertools
 from collections.abc import Iterator
 from datetime import UTC, date, datetime
 
@@ -67,6 +68,10 @@ def session(engine: Engine) -> Iterator[Session]:
 # ---------------------------------------------------------------------------
 
 
+_ingestion_run_counter: Iterator[int] = itertools.count(1)
+_stat_snapshot_counter: Iterator[int] = itertools.count(1)
+
+
 def _now() -> datetime:
     return datetime.now(UTC)
 
@@ -85,18 +90,21 @@ def _make_player(session: Session, team_id: int, ext: str = "P001") -> Player:
     return player
 
 
-def _make_ingestion_run(session: Session) -> IngestionRun:
-    run = IngestionRun(source="statiz", status="completed")
+def _make_ingestion_run(session: Session, source: str | None = None) -> IngestionRun:
+    if source is None:
+        source = f"statiz_{next(_ingestion_run_counter)}"
+    run = IngestionRun(source=source, status="completed")
     session.add(run)
     session.flush()
     return run
 
 
 def _make_stat_snapshot(session: Session, run_id: int) -> StatSnapshot:
+    n = next(_stat_snapshot_counter)
     snap = StatSnapshot(
         ingestion_run_id=run_id,
         snapshot_at=_now(),
-        content_hash="a" * 64,
+        content_hash=f"stat_snap_{n}_" + "a" * (64 - len(f"stat_snap_{n}_")),
     )
     session.add(snap)
     session.flush()
@@ -320,6 +328,79 @@ def test_actual_lineup_snapshots_game_team_announced_unique(session: Session) ->
         content_hash="z" * 64,
     )
     session.add(dup)
+    with pytest.raises(IntegrityError):
+        session.flush()
+
+
+def test_ingestion_runs_source_unique(session: Session) -> None:
+    """Two IngestionRun rows with the same source must raise IntegrityError."""
+    run1 = IngestionRun(source="dup_source", status="completed")
+    session.add(run1)
+    session.commit()
+
+    run2 = IngestionRun(source="dup_source", status="pending")
+    session.add(run2)
+    with pytest.raises(IntegrityError):
+        session.flush()
+
+
+def test_stat_snapshots_content_hash_unique(session: Session) -> None:
+    """Two StatSnapshot rows with the same content_hash must raise IntegrityError."""
+    ir = IngestionRun(source="stat_hash_test_src", status="completed")
+    session.add(ir)
+    session.flush()
+
+    snap1 = StatSnapshot(
+        ingestion_run_id=ir.id,
+        snapshot_at=_now(),
+        content_hash="dup_stat_hash_" + "x" * 50,
+    )
+    session.add(snap1)
+    session.commit()
+
+    snap2 = StatSnapshot(
+        ingestion_run_id=ir.id,
+        snapshot_at=_now(),
+        content_hash="dup_stat_hash_" + "x" * 50,
+    )
+    session.add(snap2)
+    with pytest.raises(IntegrityError):
+        session.flush()
+
+
+def test_box_score_snapshots_content_hash_unique(session: Session) -> None:
+    """Two BoxScoreSnapshot rows with the same content_hash must raise IntegrityError."""
+    home = _make_team(session, code="LGBS", name="LG Twins BoxScore")
+    away = _make_team(session, code="SSBS", name="Samsung BoxScore")
+    game = Game(
+        external_id="G_BS_HASH_UNIQ",
+        home_team_id=home.id,
+        away_team_id=away.id,
+        game_date=date(2026, 5, 25),
+    )
+    session.add(game)
+    session.flush()
+
+    ir = IngestionRun(source="box_hash_test_src", status="completed")
+    session.add(ir)
+    session.flush()
+
+    snap1 = BoxScoreSnapshot(
+        game_id=game.id,
+        ingestion_run_id=ir.id,
+        taken_at=_now(),
+        content_hash="dup_box_hash_" + "y" * 51,
+    )
+    session.add(snap1)
+    session.commit()
+
+    snap2 = BoxScoreSnapshot(
+        game_id=game.id,
+        ingestion_run_id=ir.id,
+        taken_at=_now(),
+        content_hash="dup_box_hash_" + "y" * 51,
+    )
+    session.add(snap2)
     with pytest.raises(IntegrityError):
         session.flush()
 
