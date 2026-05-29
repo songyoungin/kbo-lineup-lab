@@ -10,25 +10,23 @@ Naver game id embedded in the raw payload source URL.
 from __future__ import annotations
 
 import json
-import re
 from dataclasses import dataclass
 from typing import Final
-from urllib.parse import urlsplit
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.ingestion.game_id import naver_to_kbo
-from app.ingestion.normalizers._shared import compute_content_hash, parse_game_datetime_kst
+from app.ingestion.normalizers._shared import (
+    LG_TEAM_CODE,
+    compute_content_hash,
+    parse_game_datetime_kst,
+    resolve_game_from_naver_url,
+)
 from app.ingestion.player_matcher import MatchStatus, match_player
-from app.models.game import Game
 from app.models.snapshot import BoxScoreRow, BoxScoreSnapshot, RawIngestionPayload
 
 __all__ = ["BoxScoreNormalizeResult", "normalize_box_score"]
 
-_LG_CODE: Final = "LG"
-# Extracts the Naver game id from ".../schedule/games/{naverId}/record".
-_GAME_ID_URL_RE: Final = re.compile(r"/schedule/games/([^/]+)/record")
 # Stat keys preserved in extra_stats_json beyond the typed columns.
 _EXTRA_STAT_KEYS: Final = ("hr", "bb", "kk", "sb", "hra", "pos", "batOrder")
 
@@ -51,32 +49,6 @@ class BoxScoreNormalizeResult:
     rows_skipped: int
     skipped_not_final: bool
     needs_review_reasons: tuple[str, ...]
-
-
-def _resolve_game(session: Session, source_url: str) -> Game:
-    """Resolve the Game from the Naver game id embedded in the source URL.
-
-    Args:
-        session: Active SQLAlchemy session.
-        source_url: The raw payload source URL containing the Naver game id.
-
-    Returns:
-        The matching Game row.
-
-    Raises:
-        ValueError: If the URL has no Naver game id or no Game matches.
-    """
-    match = _GAME_ID_URL_RE.search(urlsplit(source_url).path)
-    if match is None:
-        raise ValueError(f"cannot extract Naver game id from source_url: {source_url!r}")
-    try:
-        external_id = naver_to_kbo(match.group(1))
-    except ValueError as exc:
-        raise ValueError(f"unparseable Naver game id in source_url: {source_url!r}") from exc
-    game = session.execute(select(Game).where(Game.external_id == external_id)).scalar_one_or_none()
-    if game is None:
-        raise ValueError(f"box_score payload references unknown game: {external_id!r}")
-    return game
 
 
 def _int_or_none(value: object) -> int | None:
@@ -133,9 +105,9 @@ def normalize_box_score(
 
     home_code = game_info.get("hCode")
     away_code = game_info.get("aCode")
-    if home_code == _LG_CODE:
+    if home_code == LG_TEAM_CODE:
         lg_batters = batters_box.get("home") or []
-    elif away_code == _LG_CODE:
+    elif away_code == LG_TEAM_CODE:
         lg_batters = batters_box.get("away") or []
     else:
         raise ValueError(f"LG not in game: hCode={home_code!r} aCode={away_code!r}")
@@ -150,7 +122,7 @@ def normalize_box_score(
             needs_review_reasons=(),
         )
 
-    game = _resolve_game(session, raw_payload.source_url)
+    game = resolve_game_from_naver_url(session, raw_payload.source_url)
     taken_at = parse_game_datetime_kst(game_info)
     content_hash = compute_content_hash(lg_batters)
 
@@ -186,7 +158,7 @@ def normalize_box_score(
         name = entry.get("name")
         match = match_player(
             session,
-            team_code=_LG_CODE,
+            team_code=LG_TEAM_CODE,
             external_id=external_id,
             name=str(name) if name else None,
         )

@@ -29,7 +29,11 @@ from dataclasses import dataclass
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.ingestion.normalizers._shared import compute_content_hash, parse_game_datetime_kst
+from app.ingestion.normalizers._shared import (
+    LG_TEAM_CODE,
+    compute_content_hash,
+    parse_game_datetime_kst,
+)
 from app.ingestion.player_matcher import MatchStatus, match_player
 from app.models.snapshot import PlayerStatSnapshotRow, RawIngestionPayload, StatSnapshot
 
@@ -117,10 +121,10 @@ def normalize_player_stats(
     h_code = game_info.get("hCode")
     a_code = game_info.get("aCode")
 
-    if h_code == "LG":
+    if h_code == LG_TEAM_CODE:
         top_player_raw = preview.get("homeTopPlayer")
         starter_raw = preview.get("homeStarter")
-    elif a_code == "LG":
+    elif a_code == LG_TEAM_CODE:
         top_player_raw = preview.get("awayTopPlayer")
         starter_raw = preview.get("awayStarter")
     else:
@@ -201,7 +205,7 @@ def normalize_player_stats(
 
         match = match_player(
             session,
-            team_code="LG",
+            team_code=LG_TEAM_CODE,
             external_id=external_id,
             name=name,
         )

@@ -24,7 +24,7 @@ yet been announced and we return WAITING without creating a database row.
 from __future__ import annotations
 
 import json
-from datetime import datetime, timedelta, timezone
+from datetime import datetime
 from enum import StrEnum
 from typing import Any, Final
 
@@ -37,7 +37,7 @@ from app.ingestion.raw_store import save_raw_payload
 from app.ingestion.types import PayloadCategory
 from app.models.snapshot import IngestionRun, RawIngestionPayload
 from app.schemas.ingestion import RawPayloadCreate
-from app.util.time import to_utc
+from app.util.time import KST, to_utc
 
 __all__ = [
     "SOURCE_NAME",
@@ -52,7 +52,6 @@ SOURCE_NAME: Final = "naver_sports"
 NAVER_REFERER: Final = "https://m.sports.naver.com/"
 
 _NAVER_PREVIEW_URL: Final = "https://api-gw.sports.naver.com/schedule/games/{naver_id}/preview"
-_KST: Final = timezone(timedelta(hours=9))
 
 
 def build_naver_preview_url(*, kbo_game_id: str) -> str:
@@ -221,7 +220,7 @@ def _parse_announced_at(preview: dict[str, Any]) -> datetime | None:
     if not isinstance(gtime, str) or not gtime.strip():
         gtime = "00:00"
     try:
-        local = datetime.strptime(f"{gdate} {gtime}", "%Y%m%d %H:%M").replace(tzinfo=_KST)
+        local = datetime.strptime(f"{gdate} {gtime}", "%Y%m%d %H:%M").replace(tzinfo=KST)
     except ValueError:
         return None
     return to_utc(local)

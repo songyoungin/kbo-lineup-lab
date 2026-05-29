@@ -10,6 +10,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.ingestion.game_id import naver_to_kbo
+from app.ingestion.normalizers._shared import LG_TEAM_CODE
 from app.models.game import Game
 from app.models.snapshot import RawIngestionPayload
 from app.models.team import Team
@@ -95,7 +96,7 @@ def normalize_schedule(
     for entry in games_list:
         home_code = entry.get("homeTeamCode")
         away_code = entry.get("awayTeamCode")
-        if "LG" not in (home_code, away_code):
+        if LG_TEAM_CODE not in (home_code, away_code):
             continue  # single-team MVP: only LG games
         naver_id = entry.get("gameId")
         game_date_str = entry.get("gameDate")

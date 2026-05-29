@@ -9,15 +9,33 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from collections.abc import Mapping
-from datetime import datetime, timedelta, timezone
+from datetime import datetime
 from typing import Final
+from urllib.parse import urlsplit
 
-from app.util.time import to_utc
+from sqlalchemy import select
+from sqlalchemy.orm import Session
 
-__all__ = ["KST", "compute_content_hash", "parse_game_datetime_kst"]
+from app.ingestion.game_id import naver_to_kbo
+from app.models.game import Game
+from app.util.time import KST, to_utc
 
-KST: Final = timezone(timedelta(hours=9))
+__all__ = [
+    "KST",
+    "LG_TEAM_CODE",
+    "compute_content_hash",
+    "parse_game_datetime_kst",
+    "resolve_game_from_naver_url",
+]
+
+# The single-team MVP scope sentinel for normalizers: only LG-side data is parsed.
+LG_TEAM_CODE: Final = "LG"
+
+# Extracts the Naver game id from ".../schedule/games/{naverId}/<sub>" where the
+# sub-resource is either "preview" (lineup/stats) or "record" (box score).
+_GAME_ID_URL_RE: Final = re.compile(r"/schedule/games/([^/]+)/")
 
 
 def compute_content_hash(canonical: object) -> str:
@@ -61,3 +79,29 @@ def parse_game_datetime_kst(game_info: Mapping[str, object]) -> datetime:
     except ValueError as exc:
         raise ValueError(f"gameInfo has invalid gdate/gtime: {exc}") from exc
     return to_utc(local)
+
+
+def resolve_game_from_naver_url(session: Session, source_url: str) -> Game:
+    """Resolve the Game from a Naver /schedule/games/{id}/<sub> URL via naver_to_kbo lookup.
+
+    Args:
+        session: Active SQLAlchemy session.
+        source_url: The raw payload source URL containing the Naver game id.
+
+    Returns:
+        The matching Game row.
+
+    Raises:
+        ValueError: If the URL has no Naver game id or no Game matches.
+    """
+    match = _GAME_ID_URL_RE.search(urlsplit(source_url).path)
+    if match is None:
+        raise ValueError(f"cannot extract Naver game id from source_url: {source_url!r}")
+    try:
+        external_id = naver_to_kbo(match.group(1))
+    except ValueError as exc:
+        raise ValueError(f"unparseable Naver game id in source_url: {source_url!r}") from exc
+    game = session.execute(select(Game).where(Game.external_id == external_id)).scalar_one_or_none()
+    if game is None:
+        raise ValueError(f"payload references unknown game: {external_id!r}")
+    return game

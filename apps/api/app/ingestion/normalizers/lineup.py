@@ -13,14 +13,16 @@ import json
 import re
 from dataclasses import dataclass
 from typing import Final
-from urllib.parse import urlsplit
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.ingestion.game_id import naver_to_kbo
-from app.ingestion.normalizers._shared import compute_content_hash, parse_game_datetime_kst
-from app.models.game import Game
+from app.ingestion.normalizers._shared import (
+    LG_TEAM_CODE,
+    compute_content_hash,
+    parse_game_datetime_kst,
+    resolve_game_from_naver_url,
+)
 from app.models.player import Player
 from app.models.snapshot import (
     ActualLineupSnapshot,
@@ -31,13 +33,10 @@ from app.models.team import Team
 
 __all__ = ["LineupNormalizeResult", "normalize_lineup"]
 
-_LG_CODE: Final = "LG"
 _HAND_MAP: Final[dict[str, str]] = {"좌": "L", "우": "R", "양": "S"}
 _POSITION_PLAYER_RE: Final = re.compile(r"^([우좌])투([우좌양])타$")
 # Pitchers: "우완투수"/"좌완투수" as well as underhand/sidearm "우완언더" etc.
 _PITCHER_RE: Final = re.compile(r"^([우좌])완.*$")
-# Extracts the Naver game id from ".../schedule/games/{naverId}/preview".
-_GAME_ID_URL_RE: Final = re.compile(r"/schedule/games/([^/]+)/preview")
 
 
 @dataclass(frozen=True)
@@ -89,32 +88,6 @@ def _parse_handedness(
             return None, _HAND_MAP.get(first)
 
     return None, None
-
-
-def _resolve_game(session: Session, source_url: str) -> Game:
-    """Resolve the Game from the Naver game id embedded in the source URL.
-
-    Args:
-        session: Active SQLAlchemy session.
-        source_url: The raw payload source URL containing the Naver game id.
-
-    Returns:
-        The matching Game row.
-
-    Raises:
-        ValueError: If the URL has no Naver game id or no Game matches.
-    """
-    match = _GAME_ID_URL_RE.search(urlsplit(source_url).path)
-    if match is None:
-        raise ValueError(f"cannot extract Naver game id from source_url: {source_url!r}")
-    try:
-        external_id = naver_to_kbo(match.group(1))
-    except ValueError as exc:
-        raise ValueError(f"unparseable Naver game id in source_url: {source_url!r}") from exc
-    game = session.execute(select(Game).where(Game.external_id == external_id)).scalar_one_or_none()
-    if game is None:
-        raise ValueError(f"lineup payload references unknown game: {external_id!r}")
-    return game
 
 
 def _upsert_player(session: Session, team_id: int, entry: dict[str, object]) -> Player:
@@ -207,20 +180,20 @@ def normalize_lineup(
     if not isinstance(game_info, dict):
         raise ValueError("lineup payload missing previewData.gameInfo")
 
-    game = _resolve_game(session, raw_payload.source_url)
+    game = resolve_game_from_naver_url(session, raw_payload.source_url)
 
     home_code = game_info.get("hCode")
     away_code = game_info.get("aCode")
-    if home_code == _LG_CODE:
+    if home_code == LG_TEAM_CODE:
         lineup_block = preview.get("homeTeamLineUp") or {}
-    elif away_code == _LG_CODE:
+    elif away_code == LG_TEAM_CODE:
         lineup_block = preview.get("awayTeamLineUp") or {}
     else:
         raise ValueError(f"LG not in game: hCode={home_code!r} aCode={away_code!r}")
 
-    team = session.execute(select(Team).where(Team.code == _LG_CODE)).scalar_one_or_none()
+    team = session.execute(select(Team).where(Team.code == LG_TEAM_CODE)).scalar_one_or_none()
     if team is None:
-        raise ValueError(f"unknown team code: {_LG_CODE!r}")
+        raise ValueError(f"unknown team code: {LG_TEAM_CODE!r}")
 
     announced_at = parse_game_datetime_kst(game_info)
 

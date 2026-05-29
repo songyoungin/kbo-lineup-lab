@@ -28,6 +28,7 @@ from typing import Final
 
 from sqlalchemy.orm import Session
 
+from app.ingestion.collectors.lineup import NAVER_REFERER
 from app.ingestion.http_client import HttpClient
 from app.ingestion.raw_store import save_raw_payload
 from app.ingestion.types import PayloadCategory
@@ -40,7 +41,6 @@ NAVER_SCHEDULE_URL: Final = (
     "https://api-gw.sports.naver.com/schedule/games"
     "?fields=basic&upperCategoryId=kbaseball&categoryId=kbo&fromDate={frm}&toDate={to}"
 )
-NAVER_REFERER: Final = "https://m.sports.naver.com/"
 
 
 def build_naver_schedule_url(*, date_from: date, date_to: date) -> str:

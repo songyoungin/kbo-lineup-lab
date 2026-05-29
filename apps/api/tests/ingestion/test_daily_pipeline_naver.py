@@ -12,18 +12,16 @@ Validates:
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterator
+from collections.abc import Callable
 from contextlib import AbstractContextManager
 from datetime import date
 from pathlib import Path
 
 import httpx
 import pytest
-from sqlalchemy import create_engine, func, select
-from sqlalchemy.orm import Session, sessionmaker
+from sqlalchemy import func, select
+from sqlalchemy.orm import Session
 
-import app.models  # noqa: F401 — registers models with Base.metadata
-from app.db.base import Base
 from app.ingestion.http_client import HttpClient
 from app.jobs.daily_pipeline import run_daily_pipeline
 from app.models.game import Game
@@ -36,16 +34,6 @@ PREVIEW_JSON = (FIXTURE_DIR / "preview_20250514WOLG02025.json").read_text(encodi
 RECORD_JSON = (FIXTURE_DIR / "record_20250514WOLG02025.json").read_text(encoding="utf-8")
 
 SessionFactory = Callable[[], AbstractContextManager[Session]]
-
-
-@pytest.fixture
-def session() -> Iterator[Session]:
-    """In-memory SQLite session with the full schema created."""
-    engine = create_engine("sqlite:///:memory:", connect_args={"check_same_thread": False})
-    Base.metadata.create_all(engine)
-    with sessionmaker(bind=engine)() as s:
-        yield s
-    engine.dispose()
 
 
 @pytest.fixture
