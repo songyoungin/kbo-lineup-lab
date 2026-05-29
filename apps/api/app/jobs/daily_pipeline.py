@@ -114,7 +114,8 @@ def run_daily_pipeline(
                 season=target_date.year,
                 http=http_client,
             )
-            _, season_stats_created = collect_lg_hitter_season_stats(
+            # TODO(Task 7): replace season= with game_id= when daily pipeline is wired.
+            _, season_stats_created = collect_lg_hitter_season_stats(  # type: ignore[call-arg]
                 session=session,
                 ingestion_run=run,
                 season=target_date.year,

@@ -1,30 +1,33 @@
-"""Collector that fetches LG Twins hitter stat payloads from STATIZ.
+"""Collector that fetches LG Twins hitter stat payloads.
 
 Architecture note
 -----------------
-Collectors are responsible for fetching raw source data only. Parsing the HTML
-into domain rows (player stats, splits, etc.) belongs to the normalizer task
-(Plan 17). Raw HTML is written to ``raw_ingestion_payloads`` via
-:func:`~app.ingestion.raw_store.save_raw_payload` for replay without re-fetching.
+Collectors are responsible for fetching raw source data only. Parsing the JSON
+into domain rows belongs to the normalizer. Raw payloads are written to
+``raw_ingestion_payloads`` via :func:`~app.ingestion.raw_store.save_raw_payload`
+for replay without re-fetching.
 
-LG filtering
-------------
-Filtering to LG Twins happens at the *URL level*: the ``team`` query parameter
-is set to ``LG`` in every request to STATIZ.
+Season stats source
+-------------------
+Season stats (``collect_lg_hitter_season_stats``) are fetched from the same
+Naver Sports preview endpoint used by the lineup collector.  The preview's
+``result.previewData.homeTopPlayer`` / ``homeStarter`` nodes embed
+``currentSeasonStats`` for the featured hitter and starting pitcher
+respectively.  Source identifier: ``naver_sports`` (``NAVER_SOURCE_NAME``).
+
+Recent / split stats source
+----------------------------
+Rolling-window recent stats and handedness-split stats still come from STATIZ
+(``SOURCE_NAME = "statiz"``).  Those collectors are unchanged.
 
 Split availability
 ------------------
 STATIZ exposes handedness splits (vs LHP / vs RHP) in its team batting tables.
-``SOURCE_SUPPORTS_HANDEDNESS_SPLITS`` encodes this at import time. When it is
+``SOURCE_SUPPORTS_HANDEDNESS_SPLITS`` encodes this at import time.  When it is
 ``False``, :func:`collect_lg_hitter_split_stats` writes a marker payload with
-``content_type="application/x-source-metadata+json"`` so the normalizer (Plan 17)
-can explicitly skip split scoring rather than silently treating missing data as
+``content_type="application/x-source-metadata+json"`` so the normalizer can
+explicitly skip split scoring rather than silently treating missing data as
 zero plate-appearances.
-
-URL accuracy warning
---------------------
-URL templates below are *tentative*. Verify the live STATIZ site before
-enabling scheduled ingestion runs. See docs/data-sources/kbo-source-matrix.md.
 """
 
 from __future__ import annotations
@@ -37,6 +40,7 @@ from typing import Final
 from sqlalchemy.orm import Session
 
 from app.ingestion.collectors._constants import LG_TEAM_CODE
+from app.ingestion.collectors.lineup import NAVER_REFERER, build_naver_preview_url
 from app.ingestion.http_client import HttpClient
 from app.ingestion.raw_store import save_raw_payload
 from app.ingestion.types import PayloadCategory
@@ -44,6 +48,7 @@ from app.models.snapshot import IngestionRun, RawIngestionPayload
 from app.schemas.ingestion import RawPayloadCreate
 
 __all__ = [
+    "NAVER_SOURCE_NAME",
     "SOURCE_NAME",
     "SOURCE_SUPPORTS_HANDEDNESS_SPLITS",
     "collect_lg_hitter_recent_stats",
@@ -51,11 +56,14 @@ __all__ = [
     "collect_lg_hitter_split_stats",
 ]
 
+# Source name for the Naver Sports preview endpoint (season stats).
+NAVER_SOURCE_NAME: Final = "naver_sports"
+
+# Source name retained for the STATIZ-backed recent / split collectors.
 SOURCE_NAME: Final = "statiz"
 
 # VERIFY before live use: navigate to https://statiz.sporki.com/team/?team=LG
 # and confirm exact query parameter names for year, recent window, and asof date.
-SEASON_STATS_URL_TEMPLATE: Final = "https://statiz.sporki.com/team/?team={team_code}&year={year}"
 RECENT_STATS_URL_TEMPLATE: Final = (
     "https://statiz.sporki.com/team/?team={team_code}&year={year}&recent={days}&asof={as_of}"
 )
@@ -75,17 +83,23 @@ def collect_lg_hitter_season_stats(
     *,
     session: Session,
     ingestion_run: IngestionRun,
-    season: int,
+    game_id: str,
     http: HttpClient,
 ) -> tuple[RawIngestionPayload, bool]:
-    """Fetch the LG Twins hitter season stats page for a given season.
+    """Fetch LG Twins season stats for a game day from the Naver preview endpoint.
+
+    The Naver preview payload for a given game embeds ``currentSeasonStats`` for
+    both the featured hitter (``homeTopPlayer``) and the starting pitcher
+    (``homeStarter``).  These fields are parsed by the player-stats normalizer.
+
+    The same preview JSON is also used by the lineup collector; fetching it here
+    is independent and stores the payload under ``category=PLAYER_STATS``.
 
     Args:
         session: Active SQLAlchemy session. Caller controls the transaction.
         ingestion_run: Parent ingestion run this fetch belongs to.
-        season: KBO season year (e.g. 2026).
-        http: Configured :class:`~app.ingestion.http_client.HttpClient` to use
-            for the request. Inject a mock client in tests.
+        game_id: KBO external game id (e.g. ``"20250514WOLG0"``).
+        http: Configured HttpClient to use. Inject a mock client in tests.
 
     Returns:
         Tuple of ``(raw_payload_row, created)``. ``created`` is ``False`` when
@@ -93,13 +107,14 @@ def collect_lg_hitter_season_stats(
 
     Raises:
         FetchError: If the HTTP request fails after retries.
+        ValueError: If ``game_id`` is not a valid KBO game id.
     """
-    url = SEASON_STATS_URL_TEMPLATE.format(team_code=LG_TEAM_CODE, year=season)
-    result = http.fetch(url)
+    url = build_naver_preview_url(kbo_game_id=game_id)
+    result = http.fetch(url, headers={"Referer": NAVER_REFERER})
     payload = RawPayloadCreate(
         ingestion_run_id=ingestion_run.id,
         category=PayloadCategory.PLAYER_STATS,
-        source_name=SOURCE_NAME,
+        source_name=NAVER_SOURCE_NAME,
         source_url=result.url,
         fetched_at=result.fetched_at,
         content_type=result.content_type,

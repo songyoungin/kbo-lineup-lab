@@ -400,65 +400,130 @@ def test_normalize_roster_html_raises_not_implemented(
 
 
 # ---------------------------------------------------------------------------
-# player_stats normalizer 테스트
+# player_stats normalizer tests
 # ---------------------------------------------------------------------------
+
+
+def _make_naver_preview_body(
+    *,
+    h_code: str = "LG",
+    a_code: str = "OB",
+    hitter_ext_id: str = "LG-H001",
+    hitter_name: str = "홍길동",
+    pitcher_ext_id: str = "LG-P001",
+    pitcher_name: str = "김투수",
+    gdate: int = 20260415,
+    gtime: str = "18:30",
+) -> str:
+    """Build a minimal Naver preview body for player_stats normalizer tests."""
+    return json.dumps(
+        {
+            "result": {
+                "previewData": {
+                    "gameInfo": {
+                        "gdate": gdate,
+                        "gtime": gtime,
+                        "hCode": h_code,
+                        "aCode": a_code,
+                    },
+                    "homeTopPlayer": {
+                        "playerCode": hitter_ext_id,
+                        "playerInfo": {"name": hitter_name, "pCode": hitter_ext_id},
+                        "currentSeasonStats": {
+                            "ab": 100,
+                            "hit": 30,
+                            "hra": "0.300",
+                            "obp": 0.360,
+                            "rbi": 12,
+                            "hr": 3,
+                        },
+                    },
+                    "homeStarter": {
+                        "playerInfo": {"name": pitcher_name, "pCode": pitcher_ext_id},
+                        "currentSeasonStats": {
+                            "era": "3.50",
+                            "whip": "1.20",
+                            "w": 3,
+                            "l": 2,
+                            "kk": 40,
+                            "bb": 15,
+                            "inn": "40.0",
+                        },
+                    },
+                }
+            }
+        }
+    )
 
 
 def test_normalize_player_stats_creates_snapshot_and_rows(
     session: Session, ingestion_run: IngestionRun
 ) -> None:
-    """StatSnapshot과 PlayerStatSnapshotRow가 생성되어야 한다."""
-    team = _seed_team(session, "LG", "LG 트윈스")
-    player = _seed_player(session, team, "LG-P001", "홍길동")
-    body = json.dumps(
-        {
-            "team_code": "LG",
-            "snapshot_at": "2026-04-15T16:00:00+09:00",
-            "rows": [
-                {
-                    "player_external_id": "LG-P001",
-                    "stats": {"OPS": 0.880, "OBP": 0.380, "SLG": 0.500},
-                }
-            ],
-        }
+    """StatSnapshot and PlayerStatSnapshotRow rows are created for hitter and pitcher."""
+    _seed_team(session, "LG", "LG 트윈스")
+    _seed_team(session, "OB", "두산 베어스")
+    hitter = _seed_player(
+        session,
+        session.execute(select(Team).where(Team.code == "LG")).scalar_one(),
+        "LG-H001",
+        "홍길동",
     )
+    pitcher = _seed_player(
+        session,
+        session.execute(select(Team).where(Team.code == "LG")).scalar_one(),
+        "LG-P001",
+        "김투수",
+    )
+    body = _make_naver_preview_body()
     raw = _make_raw_payload(session, ingestion_run, body, category="player_stats")
 
     result = normalize_player_stats(session, raw)
 
-    assert result.rows_created == 1
+    assert result.rows_created == 2
     assert result.rows_skipped == 0
     snapshot = session.get(StatSnapshot, result.snapshot_id)
     assert snapshot is not None
     assert snapshot.ingestion_run_id == ingestion_run.id
-    stat_row = session.execute(
+
+    hitter_row = session.execute(
         select(PlayerStatSnapshotRow).where(
             PlayerStatSnapshotRow.snapshot_id == result.snapshot_id,
-            PlayerStatSnapshotRow.player_id == player.id,
+            PlayerStatSnapshotRow.player_id == hitter.id,
         )
     ).scalar_one()
-    assert stat_row.stats_json["OPS"] == pytest.approx(0.880)
+    assert "obp" in hitter_row.stats_json
+    assert hitter_row.stats_json["role"] == "hitter"
+
+    pitcher_row = session.execute(
+        select(PlayerStatSnapshotRow).where(
+            PlayerStatSnapshotRow.snapshot_id == result.snapshot_id,
+            PlayerStatSnapshotRow.player_id == pitcher.id,
+        )
+    ).scalar_one()
+    assert "era" in pitcher_row.stats_json
+    assert pitcher_row.stats_json["role"] == "pitcher"
 
 
 def test_normalize_player_stats_idempotent_content_hash(
     session: Session, ingestion_run: IngestionRun
 ) -> None:
-    """같은 페이로드를 두 번 정규화해도 StatSnapshot이 중복 생성되지 않아야 한다."""
+    """Normalizing the same payload twice does not create duplicate StatSnapshot rows."""
     _seed_team(session, "LG", "LG 트윈스")
+    _seed_team(session, "OB", "두산 베어스")
+    _seed_player(
+        session,
+        session.execute(select(Team).where(Team.code == "LG")).scalar_one(),
+        "LG-H001",
+        "홍길동",
+    )
     _seed_player(
         session,
         session.execute(select(Team).where(Team.code == "LG")).scalar_one(),
         "LG-P001",
-        "홍길동",
+        "김투수",
     )
 
-    body = json.dumps(
-        {
-            "team_code": "LG",
-            "snapshot_at": "2026-04-15T16:00:00+09:00",
-            "rows": [{"player_external_id": "LG-P001", "stats": {"OPS": 0.880}}],
-        }
-    )
+    body = _make_naver_preview_body()
     raw = _make_raw_payload(session, ingestion_run, body, category="player_stats")
 
     result1 = normalize_player_stats(session, raw)
@@ -472,22 +537,23 @@ def test_normalize_player_stats_idempotent_content_hash(
 def test_normalize_player_stats_needs_review_reason_surfaced(
     session: Session, ingestion_run: IngestionRun
 ) -> None:
-    """알 수 없는 선수는 건너뛰고 needs_review_reasons에 이유가 포함되어야 한다."""
+    """Unknown player is skipped and a reason is recorded in needs_review_reasons."""
     _seed_team(session, "LG", "LG 트윈스")
-    body = json.dumps(
-        {
-            "team_code": "LG",
-            "snapshot_at": "2026-04-15T16:00:00+09:00",
-            "rows": [
-                {"player_external_id": "LG-GHOST", "stats": {"OPS": 0.700}},
-            ],
-        }
+    _seed_team(session, "OB", "두산 베어스")
+    # Only seed the hitter — pitcher will be NOT_FOUND.
+    _seed_player(
+        session,
+        session.execute(select(Team).where(Team.code == "LG")).scalar_one(),
+        "LG-H001",
+        "홍길동",
     )
+
+    body = _make_naver_preview_body(pitcher_ext_id="LG-GHOST", pitcher_name="없는선수")
     raw = _make_raw_payload(session, ingestion_run, body, category="player_stats")
 
     result = normalize_player_stats(session, raw)
 
-    assert result.rows_created == 0
+    assert result.rows_created == 1
     assert result.rows_skipped == 1
     assert len(result.needs_review_reasons) > 0
 
@@ -495,22 +561,23 @@ def test_normalize_player_stats_needs_review_reason_surfaced(
 def test_normalize_player_stats_snapshot_references_ingestion_run(
     session: Session, ingestion_run: IngestionRun
 ) -> None:
-    """StatSnapshot.ingestion_run_id가 raw 페이로드의 ingestion_run_id와 일치해야 한다."""
+    """StatSnapshot.ingestion_run_id matches the raw payload's ingestion_run_id."""
     _seed_team(session, "LG", "LG 트윈스")
+    _seed_team(session, "OB", "두산 베어스")
+    _seed_player(
+        session,
+        session.execute(select(Team).where(Team.code == "LG")).scalar_one(),
+        "LG-H001",
+        "홍길동",
+    )
     _seed_player(
         session,
         session.execute(select(Team).where(Team.code == "LG")).scalar_one(),
         "LG-P001",
-        "홍길동",
+        "김투수",
     )
 
-    body = json.dumps(
-        {
-            "team_code": "LG",
-            "snapshot_at": "2026-04-15T16:00:00+09:00",
-            "rows": [{"player_external_id": "LG-P001", "stats": {}}],
-        }
-    )
+    body = _make_naver_preview_body()
     raw = _make_raw_payload(session, ingestion_run, body, category="player_stats")
 
     result = normalize_player_stats(session, raw)
@@ -523,7 +590,7 @@ def test_normalize_player_stats_snapshot_references_ingestion_run(
 def test_normalize_player_stats_html_raises_not_implemented(
     session: Session, ingestion_run: IngestionRun
 ) -> None:
-    """HTML content_type이면 NotImplementedError를 발생시켜야 한다."""
+    """HTML content_type raises NotImplementedError."""
     raw = _make_raw_payload(
         session,
         ingestion_run,
