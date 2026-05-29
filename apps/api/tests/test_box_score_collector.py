@@ -1,15 +1,12 @@
-"""Tests for the LG Twins box score collector.
+"""Tests for the LG Twins box score collector (Naver record endpoint).
 
 Verifies:
-- collect_lg_box_score returns WAITING when response signals game not final (JSON)
-- collect_lg_box_score returns COLLECTED when response signals game is final (JSON)
-- The requested URL contains the game_id
+- collect_lg_box_score returns WAITING when the record has no batters box score
+- collect_lg_box_score returns COLLECTED when batters box score data is present
+- The requested URL targets the api-gw record endpoint with the game id
 - Repeated calls with identical final response bodies return same row id (idempotent)
-- final_score is parsed when homeRuns/awayRuns are present in JSON
-- final_score is None when score fields are absent from JSON
-- HTML body containing 'FINAL' marker → COLLECTED via substring fallback
-- HTML body containing '경기종료' marker → COLLECTED via substring fallback
-- HTML body without any final marker → WAITING
+- final_score is parsed from scoreBoard.rheb when present
+- final_score is None when score fields are absent
 - DB row count is unchanged when status is WAITING
 - Empty body → WAITING
 
@@ -29,9 +26,9 @@ from sqlalchemy.orm import Session, sessionmaker
 import app.models  # noqa: F401 — registers all models with Base.metadata
 from app.db.base import Base
 from app.ingestion.collectors.box_score import (
-    BOX_SCORE_URL_TEMPLATE,
     BoxScoreStatus,
     FinalScore,
+    build_naver_record_url,
     collect_lg_box_score,
 )
 from app.ingestion.http_client import HttpClient
@@ -41,45 +38,49 @@ from app.models.snapshot import IngestionRun, RawIngestionPayload
 # Shared constants
 # ---------------------------------------------------------------------------
 
-GAME_ID = "20260415LGDOO"
+GAME_ID = "20250514WOLG0"
 CONTENT_TYPE_JSON = "application/json; charset=utf-8"
-CONTENT_TYPE_HTML = "text/html; charset=utf-8"
 
-SAMPLE_BOX_SCORE_URL = BOX_SCORE_URL_TEMPLATE.format(game_id=GAME_ID)
+RECORD_URL = build_naver_record_url(kbo_game_id=GAME_ID)
 
-# JSON with final game status and score → COLLECTED
-BODY_FINAL_WITH_SCORE = json.dumps(
-    {
-        "gameStatus": "FINAL",
-        "homeRuns": 5,
-        "awayRuns": 3,
-        "hitters": [{"playerId": "1", "ab": 4, "h": 2}],
+
+def _record_body(
+    *,
+    home_batters: list[dict[str, object]],
+    away_batters: list[dict[str, object]],
+    rheb: dict[str, object] | None = None,
+) -> str:
+    """Build a minimal Naver record body for collector tests."""
+    record: dict[str, object] = {
+        "battersBoxscore": {"home": home_batters, "away": away_batters},
     }
+    if rheb is not None:
+        record["scoreBoard"] = {"rheb": rheb}
+    return json.dumps({"result": {"recordData": record}})
+
+
+# JSON with batters box score and final score → COLLECTED
+BODY_FINAL_WITH_SCORE = _record_body(
+    home_batters=[{"playerCode": "62415", "ab": 4, "hit": 2}],
+    away_batters=[],
+    rheb={"home": {"r": 5}, "away": {"r": 3}},
 )
 
-# JSON with in-progress status → WAITING
-BODY_IN_PROGRESS = json.dumps(
-    {
-        "gameStatus": "IN_PROGRESS",
-        "homeRuns": 3,
-        "awayRuns": 2,
-    }
+# JSON with empty box score → WAITING
+BODY_NOT_FINAL = _record_body(home_batters=[], away_batters=[])
+
+# JSON with batters but no score board → COLLECTED, no FinalScore
+BODY_FINAL_WITHOUT_SCORE = _record_body(
+    home_batters=[{"playerCode": "62415", "ab": 4, "hit": 2}],
+    away_batters=[],
 )
 
-# JSON with final status but no score fields → COLLECTED, no FinalScore
-BODY_FINAL_WITHOUT_SCORE = json.dumps({"gameStatus": "FINAL"})
-
-# JSON with final status and score — same as above for idempotency tests
-BODY_FINAL_IDEMPOTENT = json.dumps({"gameStatus": "FINAL", "homeRuns": 7, "awayRuns": 4})
-
-# HTML with 'FINAL' substring → COLLECTED via fallback
-BODY_HTML_FINAL = "<html><body>경기결과: FINAL<table>...</table></body></html>"
-
-# HTML with '경기종료' substring → COLLECTED via fallback
-BODY_HTML_GAMEOVER = "<html><body>경기종료 5:3 LG 승</body></html>"
-
-# HTML without any final marker → WAITING
-BODY_HTML_IN_PROGRESS = "<html><body>진행중 3:2 (7회)</body></html>"
+# JSON identical-final body for idempotency tests
+BODY_FINAL_IDEMPOTENT = _record_body(
+    home_batters=[{"playerCode": "62415", "ab": 3, "hit": 1}],
+    away_batters=[],
+    rheb={"home": {"r": 7}, "away": {"r": 4}},
+)
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -149,14 +150,8 @@ def _make_mock_http_client(
 def test_collect_returns_waiting_when_game_not_final(
     session: Session, ingestion_run: IngestionRun
 ) -> None:
-    """JSON gameStatus=IN_PROGRESS → result.status is WAITING, no row created.
-
-    Mocks: handler returns {"gameStatus": "IN_PROGRESS", "homeRuns": 3, "awayRuns": 2}.
-    Verifies: status WAITING, raw_payload is None, created=False.
-    """
-    http = _make_mock_http_client(
-        {SAMPLE_BOX_SCORE_URL: (200, BODY_IN_PROGRESS, CONTENT_TYPE_JSON)}
-    )
+    """Empty battersBoxscore → result.status is WAITING, no row created."""
+    http = _make_mock_http_client({RECORD_URL: (200, BODY_NOT_FINAL, CONTENT_TYPE_JSON)})
 
     result = collect_lg_box_score(
         session=session,
@@ -174,9 +169,7 @@ def test_waiting_result_has_no_raw_payload_row(
     session: Session, ingestion_run: IngestionRun
 ) -> None:
     """When status is WAITING, no RawIngestionPayload row is inserted into the DB."""
-    http = _make_mock_http_client(
-        {SAMPLE_BOX_SCORE_URL: (200, BODY_IN_PROGRESS, CONTENT_TYPE_JSON)}
-    )
+    http = _make_mock_http_client({RECORD_URL: (200, BODY_NOT_FINAL, CONTENT_TYPE_JSON)})
 
     collect_lg_box_score(
         session=session,
@@ -189,28 +182,9 @@ def test_waiting_result_has_no_raw_payload_row(
     assert count == 0
 
 
-def test_collect_html_body_without_final_marker_returns_waiting(
-    session: Session, ingestion_run: IngestionRun
-) -> None:
-    """HTML body without 'FINAL' or '경기종료' → WAITING via substring fallback."""
-    http = _make_mock_http_client(
-        {SAMPLE_BOX_SCORE_URL: (200, BODY_HTML_IN_PROGRESS, CONTENT_TYPE_HTML)}
-    )
-
-    result = collect_lg_box_score(
-        session=session,
-        ingestion_run=ingestion_run,
-        game_id=GAME_ID,
-        http=http,
-    )
-
-    assert result.status == BoxScoreStatus.WAITING
-    assert result.raw_payload is None
-
-
 def test_collect_handles_empty_body(session: Session, ingestion_run: IngestionRun) -> None:
     """Empty string body cannot signal a final game → WAITING."""
-    http = _make_mock_http_client({SAMPLE_BOX_SCORE_URL: (200, "", CONTENT_TYPE_JSON)})
+    http = _make_mock_http_client({RECORD_URL: (200, "", CONTENT_TYPE_JSON)})
 
     result = collect_lg_box_score(
         session=session,
@@ -231,14 +205,8 @@ def test_collect_handles_empty_body(session: Session, ingestion_run: IngestionRu
 def test_collect_returns_collected_when_game_is_final(
     session: Session, ingestion_run: IngestionRun
 ) -> None:
-    """JSON gameStatus=FINAL → status COLLECTED, raw_payload populated, created=True.
-
-    Mocks: handler returns {"gameStatus": "FINAL", "homeRuns": 5, "awayRuns": 3, ...}.
-    Verifies: status COLLECTED, raw_payload set, source fields match, created=True.
-    """
-    http = _make_mock_http_client(
-        {SAMPLE_BOX_SCORE_URL: (200, BODY_FINAL_WITH_SCORE, CONTENT_TYPE_JSON)}
-    )
+    """Populated battersBoxscore → status COLLECTED, raw_payload populated."""
+    http = _make_mock_http_client({RECORD_URL: (200, BODY_FINAL_WITH_SCORE, CONTENT_TYPE_JSON)})
 
     result = collect_lg_box_score(
         session=session,
@@ -251,48 +219,10 @@ def test_collect_returns_collected_when_game_is_final(
     assert result.raw_payload is not None
     assert result.raw_payload.id is not None
     assert result.raw_payload.category == "box_score"
-    assert result.raw_payload.source_name == "kbo_official"
-    assert result.raw_payload.source_url == SAMPLE_BOX_SCORE_URL
+    assert result.raw_payload.source_name == "naver_sports"
+    assert result.raw_payload.source_url == RECORD_URL
     assert result.raw_payload.raw_body == BODY_FINAL_WITH_SCORE
     assert result.raw_payload.ingestion_run_id == ingestion_run.id
-    assert result.created is True
-
-
-def test_collect_html_body_with_final_marker_returns_collected(
-    session: Session, ingestion_run: IngestionRun
-) -> None:
-    """HTML body containing 'FINAL' substring → COLLECTED via substring fallback path."""
-    http = _make_mock_http_client({SAMPLE_BOX_SCORE_URL: (200, BODY_HTML_FINAL, CONTENT_TYPE_HTML)})
-
-    result = collect_lg_box_score(
-        session=session,
-        ingestion_run=ingestion_run,
-        game_id=GAME_ID,
-        http=http,
-    )
-
-    assert result.status == BoxScoreStatus.COLLECTED
-    assert result.raw_payload is not None
-    assert result.created is True
-
-
-def test_collect_html_body_with_gameover_marker_returns_collected(
-    session: Session, ingestion_run: IngestionRun
-) -> None:
-    """HTML body containing '경기종료' substring → COLLECTED via substring fallback path."""
-    http = _make_mock_http_client(
-        {SAMPLE_BOX_SCORE_URL: (200, BODY_HTML_GAMEOVER, CONTENT_TYPE_HTML)}
-    )
-
-    result = collect_lg_box_score(
-        session=session,
-        ingestion_run=ingestion_run,
-        game_id=GAME_ID,
-        http=http,
-    )
-
-    assert result.status == BoxScoreStatus.COLLECTED
-    assert result.raw_payload is not None
     assert result.created is True
 
 
@@ -301,11 +231,11 @@ def test_collect_html_body_with_gameover_marker_returns_collected(
 # ---------------------------------------------------------------------------
 
 
-def test_collect_url_includes_game_id(session: Session, ingestion_run: IngestionRun) -> None:
-    """The game_id must appear in the URL actually requested."""
+def test_collect_url_targets_record_endpoint(session: Session, ingestion_run: IngestionRun) -> None:
+    """The requested URL must be the api-gw record endpoint and send a Referer."""
     captured: list[httpx.Request] = []
     http = _make_mock_http_client(
-        {SAMPLE_BOX_SCORE_URL: (200, BODY_FINAL_WITH_SCORE, CONTENT_TYPE_JSON)},
+        {RECORD_URL: (200, BODY_FINAL_WITH_SCORE, CONTENT_TYPE_JSON)},
         captured_requests=captured,
     )
 
@@ -317,7 +247,8 @@ def test_collect_url_includes_game_id(session: Session, ingestion_run: Ingestion
     )
 
     assert len(captured) == 1
-    assert GAME_ID in str(captured[0].url)
+    assert str(captured[0].url) == RECORD_URL
+    assert captured[0].headers.get("Referer") == "https://m.sports.naver.com/"
 
 
 # ---------------------------------------------------------------------------
@@ -332,9 +263,7 @@ def test_collect_idempotent_on_identical_final_body(
 
     Proves duplicate final payloads dedupe via (source_name, source_url, payload_hash).
     """
-    http = _make_mock_http_client(
-        {SAMPLE_BOX_SCORE_URL: (200, BODY_FINAL_IDEMPOTENT, CONTENT_TYPE_JSON)}
-    )
+    http = _make_mock_http_client({RECORD_URL: (200, BODY_FINAL_IDEMPOTENT, CONTENT_TYPE_JSON)})
 
     result1 = collect_lg_box_score(
         session=session,
@@ -364,14 +293,8 @@ def test_collect_idempotent_on_identical_final_body(
 def test_collect_parses_final_score_when_present(
     session: Session, ingestion_run: IngestionRun
 ) -> None:
-    """Both homeRuns and awayRuns in JSON → FinalScore populated correctly.
-
-    Mocks: handler returns {"gameStatus": "FINAL", "homeRuns": 5, "awayRuns": 3, ...}.
-    Verifies: final_score.home_runs=5, final_score.away_runs=3.
-    """
-    http = _make_mock_http_client(
-        {SAMPLE_BOX_SCORE_URL: (200, BODY_FINAL_WITH_SCORE, CONTENT_TYPE_JSON)}
-    )
+    """scoreBoard.rheb home/away runs → FinalScore populated correctly."""
+    http = _make_mock_http_client({RECORD_URL: (200, BODY_FINAL_WITH_SCORE, CONTENT_TYPE_JSON)})
 
     result = collect_lg_box_score(
         session=session,
@@ -389,10 +312,8 @@ def test_collect_parses_final_score_when_present(
 def test_collect_returns_none_final_score_when_absent(
     session: Session, ingestion_run: IngestionRun
 ) -> None:
-    """JSON without homeRuns/awayRuns → final_score is None even when game is final."""
-    http = _make_mock_http_client(
-        {SAMPLE_BOX_SCORE_URL: (200, BODY_FINAL_WITHOUT_SCORE, CONTENT_TYPE_JSON)}
-    )
+    """No scoreBoard → final_score is None even when the box score is present."""
+    http = _make_mock_http_client({RECORD_URL: (200, BODY_FINAL_WITHOUT_SCORE, CONTENT_TYPE_JSON)})
 
     result = collect_lg_box_score(
         session=session,

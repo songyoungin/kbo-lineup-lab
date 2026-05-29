@@ -1,4 +1,4 @@
-"""LG Twins 일별 수집 파이프라인: 스케줄 + 로스터 + 선수 스탯."""
+"""LG Twins daily ingestion pipeline: schedule, then per-game lineup/stats/box score."""
 
 from __future__ import annotations
 
@@ -8,53 +8,75 @@ from contextlib import AbstractContextManager
 from dataclasses import dataclass
 from datetime import UTC, date, datetime
 
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.db.session import SessionLocal
-from app.ingestion.collectors.player_stats import (
-    collect_lg_hitter_recent_stats,
-    collect_lg_hitter_season_stats,
-)
-from app.ingestion.collectors.roster import collect_lg_roster
+from app.ingestion.collectors.box_score import BoxScoreStatus, collect_lg_box_score
+from app.ingestion.collectors.lineup import LineupStatus, collect_lg_lineup
 from app.ingestion.collectors.schedule import collect_lg_schedule
 from app.ingestion.http_client import HttpClient
+from app.ingestion.normalizers.box_score import normalize_box_score
+from app.ingestion.normalizers.lineup import normalize_lineup
+from app.ingestion.normalizers.player_stats import normalize_player_stats
+from app.ingestion.normalizers.schedule import normalize_schedule
 from app.jobs._run_tracking import get_or_create_ingestion_run
+from app.models.game import Game
 
 logger = logging.getLogger(__name__)
 
 SOURCE_PREFIX: str = "pipeline:ingest-daily"
 
+# Politeness: per-host throttle for the production client. Tests inject their own
+# zero-interval mock client, so this only affects real network runs.
+PRODUCTION_MIN_INTERVAL: float = 5.0
+
 
 @dataclass(frozen=True)
 class DailyPipelineResult:
-    """일별 파이프라인 실행 결과.
+    """Result of a daily pipeline run.
+
+    The ``*_created`` counts report how many snapshots had at least one NEW row
+    inserted by their normalizer on THIS run (gated on ``rows_created > 0``).
+    They are 0 on the completed-run short-circuit and on a crash-retry where the
+    normalizers' content-hash / natural-key dedup guards fire. A 0 therefore does
+    NOT mean the snapshot is absent from the DB: it may have been created on an
+    earlier run. ``games_found`` is likewise 0 on the completed-run short-circuit
+    path (no schedule re-query happens there).
 
     Attributes:
-        ingestion_run_id: IngestionRun의 PK.
-        status: "completed" 또는 "failed".
-        schedule_created: 스케줄 페이로드가 새로 생성된 경우 True.
-        roster_created: 로스터 페이로드가 새로 생성된 경우 True.
-        season_stats_created: 시즌 스탯 페이로드가 새로 생성된 경우 True.
-        recent_stats_payloads_created: 새로 생성된 최근 스탯 페이로드 수.
-        error_message: 실패 시 예외 메시지.
+        ingestion_run_id: PK of the IngestionRun.
+        status: "completed" or "failed".
+        schedule_created: True when a new schedule payload was stored.
+        games_found: Number of LG games found for the target date; 0 on the
+            completed-run short-circuit path.
+        lineups_created: Number of games whose lineup normalizer inserted at least
+            one new row on this run (``rows_created > 0``).
+        stat_snapshots_created: Number of games whose player-stats normalizer
+            inserted at least one new row on this run (``rows_created > 0``).
+        box_scores_created: Number of games whose box-score normalizer inserted at
+            least one new row on this run (``rows_created > 0``, not skipped).
+        error_message: Exception message when the run failed.
     """
 
     ingestion_run_id: int
     status: str
     schedule_created: bool
-    roster_created: bool
-    season_stats_created: bool
-    recent_stats_payloads_created: int
+    games_found: int
+    lineups_created: int
+    stat_snapshots_created: int
+    box_scores_created: int
     error_message: str | None = None
 
     def summary(self) -> str:
-        """실행 결과 요약 문자열을 반환한다."""
+        """Return a one-line summary of the run result."""
         return (
             f"daily pipeline run {self.ingestion_run_id}: {self.status}; "
             f"schedule={'+' if self.schedule_created else 'existing'}, "
-            f"roster={'+' if self.roster_created else 'existing'}, "
-            f"season_stats={'+' if self.season_stats_created else 'existing'}, "
-            f"recent_stats_payloads={self.recent_stats_payloads_created}"
+            f"games={self.games_found}, "
+            f"lineups={self.lineups_created}, "
+            f"stat_snapshots={self.stat_snapshots_created}, "
+            f"box_scores={self.box_scores_created}"
         )
 
 
@@ -64,22 +86,25 @@ def run_daily_pipeline(
     session_factory: Callable[[], AbstractContextManager[Session]] = SessionLocal,
     http: HttpClient | None = None,
 ) -> DailyPipelineResult:
-    """스케줄·로스터·선수 스탯(시즌·최근)을 수집하는 멱등 일별 파이프라인.
+    """Idempotent daily pipeline driving the Naver collectors end-to-end.
 
-    동일 날짜로 재실행해도 이미 완료된 IngestionRun을 그대로 반환하며
-    중복 수집을 수행하지 않는다.
+    For ``target_date`` the pipeline collects the LG schedule, then for each LG
+    game collects+normalizes the lineup, player stats, and box score.
 
-    크래시 재시도 시 ``started_at``은 최초 실행 시점을 유지한다 (감사 로그 보존).
+    Re-running for the same date returns the already-completed IngestionRun
+    without re-collecting anything. On crash-retry, ``started_at`` is preserved
+    so the audit log keeps the original start time.
 
     Args:
-        target_date: 수집 대상 날짜.
-        session_factory: SQLAlchemy 세션 팩토리 (테스트에서 대체 가능).
-        http: HttpClient 인스턴스. None이면 새로 생성하며 완료 후 닫는다.
+        target_date: The date to ingest.
+        session_factory: SQLAlchemy session factory (overridable in tests).
+        http: HttpClient instance. When None a new one is created (with a per-host
+            throttle) and closed afterwards.
 
     Returns:
         DailyPipelineResult.
     """
-    http_client = http or HttpClient()
+    http_client = http or HttpClient(min_interval=PRODUCTION_MIN_INTERVAL)
     own_http = http is None
     with session_factory() as session:
         source = f"{SOURCE_PREFIX}:{target_date.isoformat()}"
@@ -90,42 +115,73 @@ def run_daily_pipeline(
                 ingestion_run_id=run.id,
                 status="completed",
                 schedule_created=False,
-                roster_created=False,
-                season_stats_created=False,
-                recent_stats_payloads_created=0,
+                games_found=0,
+                lineups_created=0,
+                stat_snapshots_created=0,
+                box_scores_created=0,
             )
 
-        # 최초 실행 시점만 기록; 크래시 재시도 시 기존 started_at을 덮어쓰지 않음
+        # Record the start time only once; do not overwrite it on crash-retry.
         if run.started_at is None:
             run.started_at = datetime.now(UTC)
         run.status = "running"
         session.flush()
         try:
-            _, schedule_created = collect_lg_schedule(
+            schedule_payload, schedule_created = collect_lg_schedule(
                 session=session,
                 ingestion_run=run,
                 date_from=target_date,
                 date_to=target_date,
                 http=http_client,
             )
-            _, roster_created = collect_lg_roster(
-                session=session,
-                ingestion_run=run,
-                season=target_date.year,
-                http=http_client,
+            normalize_schedule(session, schedule_payload)
+
+            # The schedule normalizer only creates LG games, so every Game row
+            # for this date is an LG game.
+            games = list(
+                session.execute(select(Game).where(Game.game_date == target_date)).scalars()
             )
-            _, season_stats_created = collect_lg_hitter_season_stats(
-                session=session,
-                ingestion_run=run,
-                season=target_date.year,
-                http=http_client,
-            )
-            recent_results = collect_lg_hitter_recent_stats(
-                session=session,
-                ingestion_run=run,
-                as_of_date=target_date,
-                http=http_client,
-            )
+
+            lineups_created = 0
+            stat_snapshots_created = 0
+            box_scores_created = 0
+            for game in games:
+                # Fetch the preview ONCE per game: the lineup collector and the
+                # season-stats collector both hit the same Naver /preview URL.
+                # Calling both would issue two identical network GETs (impolite),
+                # so we collect the preview once and run BOTH the lineup and the
+                # player-stats normalizers on that single raw payload.
+                lineup_result = collect_lg_lineup(
+                    session=session,
+                    ingestion_run=run,
+                    game_id=game.external_id,
+                    http=http_client,
+                )
+                if (
+                    lineup_result.status == LineupStatus.COLLECTED
+                    and lineup_result.raw_payload is not None
+                ):
+                    lr = normalize_lineup(session, lineup_result.raw_payload)
+                    if lr.rows_created > 0:
+                        lineups_created += 1
+                    ps = normalize_player_stats(session, lineup_result.raw_payload)
+                    if ps.rows_created > 0:
+                        stat_snapshots_created += 1
+
+                box_result = collect_lg_box_score(
+                    session=session,
+                    ingestion_run=run,
+                    game_id=game.external_id,
+                    http=http_client,
+                )
+                if (
+                    box_result.status == BoxScoreStatus.COLLECTED
+                    and box_result.raw_payload is not None
+                ):
+                    br = normalize_box_score(session, box_result.raw_payload)
+                    if not br.skipped_not_final and br.rows_created > 0:
+                        box_scores_created += 1
+
             run.status = "completed"
             run.finished_at = datetime.now(UTC)
             session.commit()
@@ -133,9 +189,10 @@ def run_daily_pipeline(
                 ingestion_run_id=run.id,
                 status="completed",
                 schedule_created=schedule_created,
-                roster_created=roster_created,
-                season_stats_created=season_stats_created,
-                recent_stats_payloads_created=sum(1 for _, created in recent_results if created),
+                games_found=len(games),
+                lineups_created=lineups_created,
+                stat_snapshots_created=stat_snapshots_created,
+                box_scores_created=box_scores_created,
             )
         except Exception as exc:
             run.status = "failed"
@@ -147,9 +204,10 @@ def run_daily_pipeline(
                 ingestion_run_id=run.id,
                 status="failed",
                 schedule_created=False,
-                roster_created=False,
-                season_stats_created=False,
-                recent_stats_payloads_created=0,
+                games_found=0,
+                lineups_created=0,
+                stat_snapshots_created=0,
+                box_scores_created=0,
                 error_message=run.error_message,
             )
         finally:

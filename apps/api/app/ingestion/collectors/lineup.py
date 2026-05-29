@@ -3,27 +3,22 @@
 Architecture note
 -----------------
 Collectors are responsible for fetching raw source data only. Parsing the JSON
-into domain rows (batting order, player ids, positions) belongs to the normalizer
-task (Plan 17). Raw JSON is written to ``raw_ingestion_payloads`` via
+into domain rows (batting order, player ids, positions) belongs to the
+normalizer. Raw JSON is written to ``raw_ingestion_payloads`` via
 :func:`~app.ingestion.raw_store.save_raw_payload` for replay without re-fetching.
 
+Data source
+-----------
+The verified endpoint is the Naver api-gw preview API:
+``https://api-gw.sports.naver.com/schedule/games/{naverGameId}/preview``. The
+lineup lives at ``result.previewData.{home,away}TeamLineUp.fullLineUp``.
+
 Lineup announcement detection
-------------------------------
-The Naver mobile preview endpoint returns HTTP 200 regardless of whether the
-lineup has been announced. We treat the presence of a non-empty ``awayLineup``
-or ``homeLineup`` array in the JSON body as the COLLECTED signal. An empty or
-absent array means the lineup has not yet been announced and we return WAITING.
-No database row is created in the WAITING case — the caller is expected to poll.
-
-URL accuracy warning
---------------------
-The URL template below is *tentative*. Verify the live Naver mobile sports API
-before enabling scheduled ingestion runs. See docs/data-sources/kbo-source-matrix.md.
-
-# VERIFY before live use: confirm that
-#   https://m.sports.naver.com/api/game/{game_id}/preview
-# returns JSON with "awayLineup" / "homeLineup" arrays when announced, and
-# "lineupAnnouncedAt" (ISO-8601 string) when the timestamp is available.
+-----------------------------
+The preview endpoint returns HTTP 200 regardless of whether the lineup has been
+announced. We treat the presence of a non-empty ``fullLineUp`` list on either
+side as the COLLECTED signal. An empty or absent list means the lineup has not
+yet been announced and we return WAITING without creating a database row.
 """
 
 from __future__ import annotations
@@ -31,30 +26,47 @@ from __future__ import annotations
 import json
 from datetime import datetime
 from enum import StrEnum
-from typing import Final
+from typing import Any, Final
 
 from pydantic import BaseModel, ConfigDict
 from sqlalchemy.orm import Session
 
+from app.ingestion.game_id import kbo_to_naver
 from app.ingestion.http_client import HttpClient
 from app.ingestion.raw_store import save_raw_payload
 from app.ingestion.types import PayloadCategory
 from app.models.snapshot import IngestionRun, RawIngestionPayload
 from app.schemas.ingestion import RawPayloadCreate
-from app.util.time import to_utc
+from app.util.time import KST, to_utc
 
 __all__ = [
     "SOURCE_NAME",
-    "LINEUP_URL_TEMPLATE",
+    "NAVER_REFERER",
     "LineupStatus",
     "LineupCollectionResult",
+    "build_naver_preview_url",
     "collect_lg_lineup",
 ]
 
 SOURCE_NAME: Final = "naver_sports"
+NAVER_REFERER: Final = "https://m.sports.naver.com/"
 
-# VERIFY before live use; Naver mobile sports API.
-LINEUP_URL_TEMPLATE: Final = "https://m.sports.naver.com/api/game/{game_id}/preview"
+_NAVER_PREVIEW_URL: Final = "https://api-gw.sports.naver.com/schedule/games/{naver_id}/preview"
+
+
+def build_naver_preview_url(*, kbo_game_id: str) -> str:
+    """Build the Naver api-gw preview URL for a KBO game id.
+
+    Args:
+        kbo_game_id: KBO G_ID string (e.g. "20250514WOLG0").
+
+    Returns:
+        Fully qualified preview endpoint URL.
+
+    Raises:
+        ValueError: If kbo_game_id is not a valid KBO game id.
+    """
+    return _NAVER_PREVIEW_URL.format(naver_id=kbo_to_naver(kbo_game_id))
 
 
 class LineupStatus(StrEnum):
@@ -68,12 +80,12 @@ class LineupCollectionResult(BaseModel):
     """Outcome of a single lineup poll.
 
     Attributes:
-        status: WAITING when lineup not yet announced; COLLECTED when data is available.
+        status: WAITING when lineup not yet announced; COLLECTED when available.
         raw_payload: The stored RawIngestionPayload row. Populated only when
             status is COLLECTED.
         fetched_at: When the source was polled (always populated).
-        announced_at: Official lineup announcement timestamp parsed from the
-            response body; None when the source does not include it.
+        announced_at: Lineup announcement timestamp derived from the payload
+            (informational); None when it cannot be derived.
         created: Whether the raw payload row was newly inserted. Always False
             when status is WAITING.
     """
@@ -94,18 +106,17 @@ def collect_lg_lineup(
     game_id: str,
     http: HttpClient,
 ) -> LineupCollectionResult:
-    """Fetch the announced LG lineup for the game, or return WAITING if not yet announced.
+    """Fetch the announced LG lineup for the game, or WAITING if not yet announced.
 
     The Naver preview endpoint returns 200 with a payload that contains either a
-    populated lineup section or a 'lineup not yet announced' marker. We treat the
-    presence of a non-empty starting lineup array as the COLLECTED signal.
+    populated ``fullLineUp`` list or empty lists. A non-empty list on either
+    side is the COLLECTED signal.
 
     Args:
         session: Active SQLAlchemy session. Caller controls the transaction.
         ingestion_run: Parent ingestion run this fetch belongs to.
-        game_id: KBO external game id (e.g. "20260415LGDOO").
-        http: Configured HttpClient to use for the request. Inject a mock
-            client in tests.
+        game_id: KBO external game id (e.g. "20250514WOLG0").
+        http: Configured HttpClient to use. Inject a mock client in tests.
 
     Returns:
         LineupCollectionResult with status WAITING (no DB row) or COLLECTED
@@ -113,12 +124,15 @@ def collect_lg_lineup(
 
     Raises:
         FetchError: If the HTTP request fails after retries.
+        ValueError: If game_id is not a valid KBO game id.
     """
-    url = LINEUP_URL_TEMPLATE.format(game_id=game_id)
-    result = http.fetch(url)
+    url = build_naver_preview_url(kbo_game_id=game_id)
+    result = http.fetch(url, headers={"Referer": NAVER_REFERER})
 
-    announced_at = _parse_announced_at(result.body)
-    if not _lineup_is_announced(result.body):
+    # Parse the body once and reuse for both announcement detection and timestamp.
+    preview = _preview_data(result.body)
+    announced_at = _parse_announced_at(preview)
+    if not _lineup_is_announced(preview):
         return LineupCollectionResult(
             status=LineupStatus.WAITING,
             raw_payload=None,
@@ -146,50 +160,67 @@ def collect_lg_lineup(
     )
 
 
-def _lineup_is_announced(body: str) -> bool:
-    """Decide whether the response body represents an announced lineup.
-
-    For Naver mobile preview JSON, the presence of a non-empty 'awayLineup' or
-    'homeLineup' array signals an announced lineup. The exact shape must be
-    VERIFIED once we capture a real sample.
+def _preview_data(body: str) -> dict[str, Any]:
+    """Parse the body and return ``result.previewData`` defensively.
 
     Args:
         body: Raw response body string.
 
     Returns:
-        True when at least one lineup array is non-empty; False otherwise
-        (including when the body is not valid JSON).
+        The previewData dict, or an empty dict if the body is unparseable or
+        the expected nesting is absent.
     """
     try:
         parsed = json.loads(body)
     except json.JSONDecodeError:
-        return False  # treat unparseable bodies as waiting; future hardening: fail loud
-    away = parsed.get("awayLineup") or []
-    home = parsed.get("homeLineup") or []
-    return bool(away or home)
+        return {}
+    if not isinstance(parsed, dict):
+        return {}
+    result = parsed.get("result") or {}
+    preview = result.get("previewData") or {}
+    return preview if isinstance(preview, dict) else {}
 
 
-def _parse_announced_at(body: str) -> datetime | None:
-    """Extract the lineup announcement timestamp from the source body, when present.
+def _lineup_is_announced(preview: dict[str, Any]) -> bool:
+    """Decide whether the response represents an announced lineup.
 
-    Expects an ISO-8601 string at ``body["lineupAnnouncedAt"]``. The exact
-    field name must be VERIFIED once we capture a real Naver response sample.
+    A non-empty ``fullLineUp`` list under either ``homeTeamLineUp`` or
+    ``awayTeamLineUp`` signals an announced lineup.
 
     Args:
-        body: Raw response body string.
+        preview: The parsed ``result.previewData`` dict (empty if unparseable).
 
     Returns:
-        UTC-normalised datetime when the field is present and parseable;
-        None otherwise.
+        True when at least one side has a non-empty lineup; False otherwise.
     """
-    try:
-        parsed = json.loads(body)
-    except json.JSONDecodeError:
+    home = (preview.get("homeTeamLineUp") or {}).get("fullLineUp") or []
+    away = (preview.get("awayTeamLineUp") or {}).get("fullLineUp") or []
+    return bool(home or away)
+
+
+def _parse_announced_at(preview: dict[str, Any]) -> datetime | None:
+    """Derive the announcement timestamp from ``gameInfo`` (KST -> UTC).
+
+    Uses ``gdate`` (YYYYMMDD) and ``gtime`` (HH:MM, defaulting to "00:00").
+    Informational only; the normalizer computes its own authoritative value.
+
+    Args:
+        preview: The parsed ``result.previewData`` dict (empty if unparseable).
+
+    Returns:
+        UTC-normalised datetime when derivable; None otherwise.
+    """
+    game_info = preview.get("gameInfo") or {}
+    gdate_raw = game_info.get("gdate")
+    # Naver returns gdate as an int (e.g. 20250514); coerce to a YYYYMMDD string.
+    gdate = str(gdate_raw) if isinstance(gdate_raw, int) else gdate_raw
+    if not isinstance(gdate, str) or len(gdate) != 8:
         return None
-    raw = parsed.get("lineupAnnouncedAt")
-    if not isinstance(raw, str):
-        return None
+    gtime = game_info.get("gtime")
+    if not isinstance(gtime, str) or not gtime.strip():
+        gtime = "00:00"
     try:
-        return to_utc(datetime.fromisoformat(raw))
+        local = datetime.strptime(f"{gdate} {gtime}", "%Y%m%d %H:%M").replace(tzinfo=KST)
     except ValueError:
         return None
+    return to_utc(local)

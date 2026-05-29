@@ -1,9 +1,6 @@
 """Tests for the LG Twins player stats collectors.
 
 Verifies:
-- collect_lg_hitter_season_stats saves a raw payload with correct metadata
-- Season stats URL contains both team code and season year
-- Season stats collector is idempotent (second call → created=False, same row id)
 - collect_lg_hitter_recent_stats emits one payload per window (default [14, 30])
 - Recent stats URL contains both window size and as-of date
 - Recent stats collector accepts custom windows and produces correct count
@@ -11,6 +8,10 @@ Verifies:
 - collect_lg_hitter_split_stats saves a payload when source supports splits
 - collect_lg_hitter_split_stats records a marker payload when splits are unsupported
 - Marker payload is idempotent across two runs
+
+Season stats (collect_lg_hitter_season_stats) are now backed by the Naver preview
+endpoint.  Coverage for that function lives in
+``tests/ingestion/test_player_stats_naver.py``.
 
 No real network connections are made. All HTTP interactions use httpx.MockTransport.
 """
@@ -31,10 +32,8 @@ from app.db.base import Base
 from app.ingestion.collectors import player_stats
 from app.ingestion.collectors._constants import LG_TEAM_CODE
 from app.ingestion.collectors.player_stats import (
-    SEASON_STATS_URL_TEMPLATE,
     SPLIT_STATS_URL_TEMPLATE,
     collect_lg_hitter_recent_stats,
-    collect_lg_hitter_season_stats,
     collect_lg_hitter_split_stats,
 )
 from app.ingestion.http_client import HttpClient
@@ -47,7 +46,6 @@ from app.models.snapshot import IngestionRun
 SEASON = 2026
 AS_OF_DATE = date(2026, 4, 15)
 CONTENT_TYPE_HTML = "text/html; charset=utf-8"
-SAMPLE_SEASON_HTML = "<html><body>LG season stats 2026</body></html>"
 SAMPLE_RECENT_HTML_14 = "<html><body>LG recent 14d stats</body></html>"
 SAMPLE_RECENT_HTML_30 = "<html><body>LG recent 30d stats</body></html>"
 SAMPLE_SPLIT_HTML = "<html><body>LG split stats 2026</body></html>"
@@ -110,80 +108,6 @@ def _make_mock_http_client(
     transport = httpx.MockTransport(handler)
     inner = httpx.Client(transport=transport)
     return HttpClient(client=inner, retry_backoff=(0.0,))
-
-
-# ---------------------------------------------------------------------------
-# Season stats tests
-# ---------------------------------------------------------------------------
-
-
-def test_collect_season_stats_saves_payload(session: Session, ingestion_run: IngestionRun) -> None:
-    """collect_lg_hitter_season_stats returns (row, created=True) with correct metadata."""
-    url = SEASON_STATS_URL_TEMPLATE.format(team_code=LG_TEAM_CODE, year=SEASON)
-    http = _make_mock_http_client({url: (200, SAMPLE_SEASON_HTML, CONTENT_TYPE_HTML)})
-
-    row, created = collect_lg_hitter_season_stats(
-        session=session,
-        ingestion_run=ingestion_run,
-        season=SEASON,
-        http=http,
-    )
-
-    assert created is True
-    assert row.id is not None
-    assert row.category == "player_stats"
-    assert row.source_name == "statiz"
-    assert row.source_url == url
-    assert row.raw_body == SAMPLE_SEASON_HTML
-    assert row.content_type == CONTENT_TYPE_HTML
-    assert row.ingestion_run_id == ingestion_run.id
-
-
-def test_collect_season_stats_url_includes_team_and_year(
-    session: Session, ingestion_run: IngestionRun
-) -> None:
-    """Season stats URL must include the LG team code and season year."""
-    url = SEASON_STATS_URL_TEMPLATE.format(team_code=LG_TEAM_CODE, year=SEASON)
-    captured: list[httpx.Request] = []
-    http = _make_mock_http_client(
-        {url: (200, SAMPLE_SEASON_HTML, CONTENT_TYPE_HTML)},
-        captured_requests=captured,
-    )
-
-    collect_lg_hitter_season_stats(
-        session=session,
-        ingestion_run=ingestion_run,
-        season=SEASON,
-        http=http,
-    )
-
-    assert len(captured) == 1
-    requested_url = str(captured[0].url)
-    assert f"team={LG_TEAM_CODE}" in requested_url
-    assert f"year={SEASON}" in requested_url
-
-
-def test_collect_season_stats_is_idempotent(session: Session, ingestion_run: IngestionRun) -> None:
-    """Second call with same response returns created=False and the same row id."""
-    url = SEASON_STATS_URL_TEMPLATE.format(team_code=LG_TEAM_CODE, year=SEASON)
-    http = _make_mock_http_client({url: (200, SAMPLE_SEASON_HTML, CONTENT_TYPE_HTML)})
-
-    row1, created1 = collect_lg_hitter_season_stats(
-        session=session,
-        ingestion_run=ingestion_run,
-        season=SEASON,
-        http=http,
-    )
-    row2, created2 = collect_lg_hitter_season_stats(
-        session=session,
-        ingestion_run=ingestion_run,
-        season=SEASON,
-        http=http,
-    )
-
-    assert created1 is True
-    assert created2 is False
-    assert row1.id == row2.id
 
 
 # ---------------------------------------------------------------------------

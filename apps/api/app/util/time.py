@@ -1,6 +1,10 @@
 """Shared datetime utilities."""
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta, timezone
+from typing import Final
+
+# Korea Standard Time (UTC+9).
+KST: Final = timezone(timedelta(hours=9))
 
 
 def to_utc(dt: datetime) -> datetime:

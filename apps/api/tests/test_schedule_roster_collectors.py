@@ -1,10 +1,6 @@
-"""Tests for schedule and roster collectors and the HttpClient wrapper.
+"""Tests for the roster collector and HttpClient wrapper.
 
 Verifies:
-- collect_lg_schedule saves a raw payload row with correct metadata
-- collect_lg_schedule is idempotent (second call returns created=False, same id)
-- The schedule URL contains the LG team filter (teamId=LG)
-- date_from > date_to raises ValueError
 - collect_lg_roster saves a raw payload row with correct metadata
 - The roster URL contains both team code and season year
 - HttpClient retries on transient HTTP 5xx errors and succeeds on the third attempt
@@ -12,13 +8,15 @@ Verifies:
 - HttpClient raises FetchError when the response body exceeds max_bytes
 - HttpClient sets the expected User-Agent header on every request
 
+Note: Schedule collector tests have been superseded by
+``tests/ingestion/test_schedule_naver.py`` (Naver primary source).
+
 No real network connections are made. All HTTP interactions use httpx.MockTransport.
 """
 
 from __future__ import annotations
 
 from collections.abc import Iterator
-from datetime import date
 
 import httpx
 import pytest
@@ -27,12 +25,8 @@ from sqlalchemy.orm import Session, sessionmaker
 
 import app.models  # noqa: F401 — registers all models with Base.metadata
 from app.db.base import Base
+from app.ingestion.collectors._constants import LG_TEAM_CODE
 from app.ingestion.collectors.roster import build_roster_url, collect_lg_roster
-from app.ingestion.collectors.schedule import (
-    LG_TEAM_CODE,
-    build_schedule_url,
-    collect_lg_schedule,
-)
 from app.ingestion.http_client import USER_AGENT, FetchError, HttpClient
 from app.models.snapshot import IngestionRun
 
@@ -40,7 +34,6 @@ from app.models.snapshot import IngestionRun
 # Shared constants
 # ---------------------------------------------------------------------------
 
-SAMPLE_SCHEDULE_HTML = "<html><body>LG schedule 2026</body></html>"
 SAMPLE_ROSTER_HTML = "<html><body>LG roster 2026</body></html>"
 CONTENT_TYPE_HTML = "text/html; charset=utf-8"
 SEASON = 2026
@@ -112,102 +105,6 @@ def _make_mock_http_client(
         max_bytes=max_bytes,
         retry_backoff=(0.0,) * max(max_retries, 1),
     )
-
-
-# ---------------------------------------------------------------------------
-# Schedule collector tests
-# ---------------------------------------------------------------------------
-
-
-def test_collect_schedule_saves_raw_payload(session: Session, ingestion_run: IngestionRun) -> None:
-    """collect_lg_schedule returns (row, created=True) with correct metadata."""
-    url = build_schedule_url(year=SEASON)
-    http = _make_mock_http_client({url: (200, SAMPLE_SCHEDULE_HTML, CONTENT_TYPE_HTML)})
-
-    row, created = collect_lg_schedule(
-        session=session,
-        ingestion_run=ingestion_run,
-        date_from=date(SEASON, 3, 1),
-        date_to=date(SEASON, 10, 31),
-        http=http,
-    )
-
-    assert created is True
-    assert row.id is not None
-    assert row.category == "schedule"
-    assert row.source_name == "kbo_official"
-    assert row.source_url == url
-    assert row.raw_body == SAMPLE_SCHEDULE_HTML
-    assert row.content_type == CONTENT_TYPE_HTML
-    assert row.ingestion_run_id == ingestion_run.id
-
-
-def test_collect_schedule_is_idempotent(session: Session, ingestion_run: IngestionRun) -> None:
-    """Second collect_lg_schedule with same response returns created=False, same row id."""
-    url = build_schedule_url(year=SEASON)
-    http = _make_mock_http_client({url: (200, SAMPLE_SCHEDULE_HTML, CONTENT_TYPE_HTML)})
-
-    row1, created1 = collect_lg_schedule(
-        session=session,
-        ingestion_run=ingestion_run,
-        date_from=date(SEASON, 3, 1),
-        date_to=date(SEASON, 10, 31),
-        http=http,
-    )
-    row2, created2 = collect_lg_schedule(
-        session=session,
-        ingestion_run=ingestion_run,
-        date_from=date(SEASON, 3, 1),
-        date_to=date(SEASON, 10, 31),
-        http=http,
-    )
-
-    assert created1 is True
-    assert created2 is False
-    assert row1.id == row2.id
-
-
-def test_collect_schedule_url_filters_lg(session: Session, ingestion_run: IngestionRun) -> None:
-    """The schedule URL must contain teamId=LG so only LG data is requested."""
-    url = build_schedule_url(year=SEASON)
-
-    # Verify the URL contains the LG team filter.
-    assert f"teamId={LG_TEAM_CODE}" in url
-
-    # Also verify via actual request capture during collect_lg_schedule.
-    captured: list[httpx.Request] = []
-    http = _make_mock_http_client(
-        {url: (200, SAMPLE_SCHEDULE_HTML, CONTENT_TYPE_HTML)},
-        captured_requests=captured,
-    )
-
-    collect_lg_schedule(
-        session=session,
-        ingestion_run=ingestion_run,
-        date_from=date(SEASON, 3, 1),
-        date_to=date(SEASON, 10, 31),
-        http=http,
-    )
-
-    assert len(captured) == 1
-    assert "teamId=LG" in str(captured[0].url)
-
-
-def test_collect_schedule_rejects_reversed_dates(
-    session: Session, ingestion_run: IngestionRun
-) -> None:
-    """date_from later than date_to raises ValueError before any HTTP request."""
-    url = build_schedule_url(year=SEASON)
-    http = _make_mock_http_client({url: (200, SAMPLE_SCHEDULE_HTML, CONTENT_TYPE_HTML)})
-
-    with pytest.raises(ValueError, match="date_from"):
-        collect_lg_schedule(
-            session=session,
-            ingestion_run=ingestion_run,
-            date_from=date(SEASON, 11, 1),  # after date_to
-            date_to=date(SEASON, 3, 1),
-            http=http,
-        )
 
 
 # ---------------------------------------------------------------------------

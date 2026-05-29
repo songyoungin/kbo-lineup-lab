@@ -1,31 +1,54 @@
-"""KBO 선수 스탯 raw 페이로드를 StatSnapshot + PlayerStatSnapshotRow로 정규화한다."""
+"""Normalizer that parses Naver preview payloads into StatSnapshot rows.
+
+The Naver preview endpoint (``result.previewData``) exposes ``currentSeasonStats``
+for two LG players per game day:
+
+- ``homeTopPlayer`` / ``awayTopPlayer``: the featured hitter with stats such as
+  ``ab``, ``hit``, ``hra`` (AVG), ``obp``, ``rbi``, ``hr``.  There is **no**
+  ``slg``, ``ops``, ``wrcPlus``, or ``woba`` in this source — only present fields
+  are stored.
+- ``homeStarter`` / ``awayStarter``: the starting pitcher with stats such as
+  ``era``, ``whip``, ``w``, ``l``, ``kk``, ``bb``, ``inn``, ``hr``, ``er``, ``r``.
+
+The LG side (home or away) is determined from ``gameInfo.hCode`` / ``aCode``.
+
+Idempotency
+-----------
+``StatSnapshot.content_hash`` (UNIQUE) is computed over the canonical extracted
+stats dict plus the raw payload id.  Including the payload id is safe only
+because ``save_raw_payload`` dedups on (source_name, source_url, payload_hash):
+an identical preview always maps to the same payload id, so the hash — and
+therefore idempotency — stays stable across re-runs.
+"""
 
 from __future__ import annotations
 
-import hashlib
 import json
 from dataclasses import dataclass
-from datetime import datetime
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.ingestion.normalizers._shared import (
+    LG_TEAM_CODE,
+    compute_content_hash,
+    parse_game_datetime_kst,
+)
 from app.ingestion.player_matcher import MatchStatus, match_player
 from app.models.snapshot import PlayerStatSnapshotRow, RawIngestionPayload, StatSnapshot
-from app.util.time import to_utc
 
 __all__ = ["PlayerStatsNormalizeResult", "normalize_player_stats"]
 
 
 @dataclass(frozen=True)
 class PlayerStatsNormalizeResult:
-    """선수 스탯 정규화 결과.
+    """Result of a player-stats normalization pass.
 
     Attributes:
-        snapshot_id: 생성되거나 기존 StatSnapshot의 PK.
-        rows_created: 새로 삽입된 PlayerStatSnapshotRow 수.
-        rows_skipped: 선수를 찾지 못해 건너뛴 행 수.
-        needs_review_reasons: 검토가 필요한 이유 목록.
+        snapshot_id: PK of the created or pre-existing StatSnapshot.
+        rows_created: Number of newly inserted PlayerStatSnapshotRow rows.
+        rows_skipped: Number of entries skipped due to unresolved player matches.
+        needs_review_reasons: Audit strings describing skips or soft-match concerns.
     """
 
     snapshot_id: int
@@ -34,46 +57,41 @@ class PlayerStatsNormalizeResult:
     needs_review_reasons: tuple[str, ...]
 
 
-def _compute_content_hash(canonical: object) -> str:
-    """정규화된 JSON 직렬화 후 SHA-256 해시를 반환한다."""
-    text = json.dumps(canonical, sort_keys=True, separators=(",", ":"), default=str)
-    return hashlib.sha256(text.encode()).hexdigest()
-
-
 def normalize_player_stats(
     session: Session,
     raw_payload: RawIngestionPayload,
 ) -> PlayerStatsNormalizeResult:
-    """raw 선수 스탯 페이로드를 파싱하여 StatSnapshot + PlayerStatSnapshotRow를 생성한다.
+    """Parse a Naver preview payload and upsert a StatSnapshot with stat rows.
 
-    기대하는 페이로드 형태 (MVP 플레이스홀더 — 실제 샘플로 검증 필요):
-    JSON:
-        {
-            "team_code": "LG",
-            "snapshot_at": "2026-04-15T16:00:00+09:00",
-            "rows": [
-                {"player_external_id": "LG-P001",
-                 "stats": {"OPS": 0.880, "OBP": 0.380, "SLG": 0.500}},
-                ...
-            ]
-        }
+    Parses ``result.previewData`` to extract ``currentSeasonStats`` for the
+    LG-side featured hitter (topPlayer) and starting pitcher (starter).
+    The LG side is detected via ``gameInfo.hCode`` / ``aCode``.
 
-    StatSnapshot은 content_hash로 중복 여부를 판단한다. 동일 raw 페이로드를
-    재처리해도 새 스냅샷이 생성되지 않는다 (멱등).
+    Only fields present in the source JSON are stored.  Advanced metrics
+    (slg, ops, wrcPlus, woba) are **not** fabricated.
 
-    MATCHED 또는 player_id가 있는 NEEDS_REVIEW 매칭에 대해 PlayerStatSnapshotRow를
-    삽입한다. NOT_FOUND 또는 모호한 매칭은 건너뛰고 이유를 기록한다.
+    StatSnapshot idempotency is enforced via ``content_hash`` (UNIQUE constraint).
+    The hash includes ``raw_payload.id``, which is stable across re-runs because
+    ``save_raw_payload`` dedups by (source_name, source_url, payload_hash).
+    Re-processing an identical payload returns the existing snapshot with
+    ``rows_created=0`` and ``rows_skipped=0``.
+
+    Players are matched via :func:`~app.ingestion.player_matcher.match_player`
+    using ``team_code="LG"`` and the source ``external_id``.  A ``NOT_FOUND``
+    or ambiguous result records a ``needs_review`` reason and skips the row.
+    Players are never upserted here — they must already exist (created by the
+    lineup normalizer).
 
     Args:
-        session: 활성 SQLAlchemy 세션. 커밋은 호출자가 담당.
-        raw_payload: raw_ingestion_payloads 행.
+        session: Active SQLAlchemy session. Caller controls the transaction.
+        raw_payload: A ``raw_ingestion_payloads`` row with JSON content.
 
     Returns:
         PlayerStatsNormalizeResult.
 
     Raises:
-        NotImplementedError: content_type이 JSON이 아닌 경우.
-        ValueError: 페이로드 JSON 형식이 올바르지 않은 경우.
+        NotImplementedError: If ``content_type`` is not JSON.
+        ValueError: If the JSON body cannot be parsed or ``gameInfo`` is missing.
     """
     if "json" not in raw_payload.content_type.lower():
         raise NotImplementedError(
@@ -86,35 +104,77 @@ def normalize_player_stats(
     except json.JSONDecodeError as exc:
         raise ValueError(f"player_stats payload is not valid JSON: {exc}") from exc
 
-    team_code: str | None = body.get("team_code")
-    snapshot_at_str: str | None = body.get("snapshot_at")
-    rows_list = body.get("rows")
+    result_node: dict[str, object] = {}
+    if isinstance(body, dict):
+        _r = body.get("result")
+        if isinstance(_r, dict):
+            result_node = _r
+    preview: dict[str, object] = {}
+    _pd = result_node.get("previewData")
+    if isinstance(_pd, dict):
+        preview = _pd
 
-    if not team_code:
-        raise ValueError("player_stats payload missing 'team_code'")
-    if not snapshot_at_str:
-        raise ValueError("player_stats payload missing 'snapshot_at'")
-    if not isinstance(rows_list, list):
-        raise ValueError("player_stats payload missing 'rows' list")
+    game_info_raw = preview.get("gameInfo")
+    game_info: dict[str, object] = game_info_raw if isinstance(game_info_raw, dict) else {}
+    snapshot_at = parse_game_datetime_kst(game_info)
 
-    try:
-        snapshot_at = to_utc(datetime.fromisoformat(snapshot_at_str))
-    except (ValueError, TypeError) as exc:
-        raise ValueError(
-            f"player_stats payload has invalid snapshot_at={snapshot_at_str!r}: {exc}"
-        ) from exc
+    h_code = game_info.get("hCode")
+    a_code = game_info.get("aCode")
 
-    content_hash = _compute_content_hash(body)
+    if h_code == LG_TEAM_CODE:
+        top_player_raw = preview.get("homeTopPlayer")
+        starter_raw = preview.get("homeStarter")
+    elif a_code == LG_TEAM_CODE:
+        top_player_raw = preview.get("awayTopPlayer")
+        starter_raw = preview.get("awayStarter")
+    else:
+        raise ValueError(f"LG not found in gameInfo: hCode={h_code!r}, aCode={a_code!r}")
 
-    existing_snapshot = session.execute(
+    top_player: dict[str, object] = top_player_raw if isinstance(top_player_raw, dict) else {}
+    starter: dict[str, object] = starter_raw if isinstance(starter_raw, dict) else {}
+
+    # Build the entries list: [(external_id, stats_dict, role), ...]
+    entries: list[tuple[str, dict[str, object], str]] = []
+
+    # Asymmetric id extraction: topPlayer exposes a top-level ``playerCode``,
+    # while starter has no top-level code — its id lives at ``playerInfo.pCode``.
+    if top_player:
+        tp_ext_id = top_player.get("playerCode")
+        tp_stats_raw = top_player.get("currentSeasonStats")
+        if isinstance(tp_ext_id, str) and tp_ext_id and isinstance(tp_stats_raw, dict):
+            entries.append((tp_ext_id, dict(tp_stats_raw), "hitter"))
+
+    if starter:
+        st_player_info_raw = starter.get("playerInfo")
+        st_player_info: dict[str, object] = (
+            st_player_info_raw if isinstance(st_player_info_raw, dict) else {}
+        )
+        st_ext_id = st_player_info.get("pCode")
+        st_stats_raw = starter.get("currentSeasonStats")
+        if isinstance(st_ext_id, str) and st_ext_id and isinstance(st_stats_raw, dict):
+            entries.append((st_ext_id, dict(st_stats_raw), "pitcher"))
+
+    # Content hash over extracted stats + payload id for determinism. Including
+    # raw_payload.id is safe ONLY because save_raw_payload dedups on
+    # (source_name, source_url, payload_hash), so an identical preview always maps
+    # to the same payload id — keeping the hash (and thus idempotency) stable.
+    canonical = {
+        "payload_id": raw_payload.id,
+        "entries": {ext_id: stats for ext_id, stats, _ in entries},
+    }
+    content_hash = compute_content_hash(canonical)
+
+    existing = session.execute(
         select(StatSnapshot).where(StatSnapshot.content_hash == content_hash)
     ).scalar_one_or_none()
 
-    if existing_snapshot is not None:
+    if existing is not None:
+        # Re-run of an already-normalized payload: nothing created, nothing
+        # newly skipped (matches the lineup normalizer's early return).
         return PlayerStatsNormalizeResult(
-            snapshot_id=existing_snapshot.id,
+            snapshot_id=existing.id,
             rows_created=0,
-            rows_skipped=len(rows_list),
+            rows_skipped=0,
             needs_review_reasons=(),
         )
 
@@ -131,21 +191,30 @@ def normalize_player_stats(
     rows_skipped = 0
     needs_review_reasons: list[str] = []
 
-    for entry in rows_list:
-        external_id: str | None = entry.get("player_external_id")
-        stats: object = entry.get("stats", {})
+    for external_id, stats, role in entries:
+        # Derive name from the relevant sub-dict for fallback matching.
+        if role == "hitter":
+            _tp_info = top_player.get("playerInfo")
+            _tp_info_d: dict[str, object] = _tp_info if isinstance(_tp_info, dict) else {}
+            name_raw = _tp_info_d.get("name")
+        else:
+            _st_info = starter.get("playerInfo")
+            _st_info_d: dict[str, object] = _st_info if isinstance(_st_info, dict) else {}
+            name_raw = _st_info_d.get("name")
+        name: str | None = name_raw if isinstance(name_raw, str) else None
 
         match = match_player(
             session,
-            team_code=team_code,
+            team_code=LG_TEAM_CODE,
             external_id=external_id,
-            name=None,
+            name=name,
         )
 
         if match.status == MatchStatus.NOT_FOUND:
             rows_skipped += 1
             needs_review_reasons.append(
-                f"player_stats row skipped — {match.reason} (player_external_id={external_id!r})"
+                f"player_stats row skipped — {match.reason} "
+                f"(external_id={external_id!r}, role={role!r})"
             )
             continue
 
@@ -160,7 +229,7 @@ def normalize_player_stats(
             PlayerStatSnapshotRow(
                 snapshot_id=snapshot_id,
                 player_id=match.player_id,
-                stats_json=stats if isinstance(stats, dict) else {},
+                stats_json={**stats, "role": role},
             )
         )
         rows_created += 1

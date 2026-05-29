@@ -7,7 +7,7 @@
 - roster: Player 행 생성; 멱등성; HTML → NotImplementedError
 - player_stats: StatSnapshot + 행 생성; content_hash 멱등성; needs_review 이유 노출
 - lineup: team_code 기준 홈/어웨이 선택; 멱등성 (natural key)
-- box_score: gameStatus≠FINAL 페이로드 건너뜀; FINAL 페이로드 정규화
+- box_score: LG 박스스코어 부재 시 건너뜀; recordData 정규화
 - 불변 조건: 모든 스냅샷 행이 raw 페이로드의 ingestion_run_id를 참조
 """
 
@@ -257,20 +257,22 @@ def test_player_match_is_matched_property(session: Session) -> None:
 
 
 def test_normalize_schedule_creates_games(session: Session, ingestion_run: IngestionRun) -> None:
-    """JSON 일정 페이로드를 파싱하여 Game 행을 생성해야 한다."""
-    lg = _seed_team(session, "LG", "LG 트윈스")
-    doo = _seed_team(session, "DOO", "두산 베어스")
+    """Naver schedule JSON payload is parsed and a Game row is created for the LG game."""
+    lg = _seed_team(session, "LG", "LG Twins")
+    ob = _seed_team(session, "OB", "Doosan Bears")
     body = json.dumps(
         {
-            "games": [
-                {
-                    "external_id": "20260415LGDOO",
-                    "game_date": "2026-04-15",
-                    "home_team_code": "LG",
-                    "away_team_code": "DOO",
-                    "venue": "잠실야구장",
-                }
-            ]
+            "result": {
+                "games": [
+                    {
+                        "gameId": "20260415OBLG02026",
+                        "gameDate": "2026-04-15",
+                        "homeTeamCode": "LG",
+                        "awayTeamCode": "OB",
+                        "stadium": "Jamsil",
+                    }
+                ]
+            }
         }
     )
     raw = _make_raw_payload(session, ingestion_run, body, category="schedule")
@@ -279,28 +281,30 @@ def test_normalize_schedule_creates_games(session: Session, ingestion_run: Inges
 
     assert result.games_created == 1
     assert result.games_existing == 0
-    game = session.execute(select(Game).where(Game.external_id == "20260415LGDOO")).scalar_one()
+    game = session.execute(select(Game).where(Game.external_id == "20260415OBLG0")).scalar_one()
     assert game.home_team_id == lg.id
-    assert game.away_team_id == doo.id
+    assert game.away_team_id == ob.id
     assert str(game.game_date) == "2026-04-15"
-    assert game.venue == "잠실야구장"
+    assert game.venue == "Jamsil"
 
 
 def test_normalize_schedule_is_idempotent(session: Session, ingestion_run: IngestionRun) -> None:
-    """같은 페이로드를 두 번 정규화해도 Game 행이 중복 생성되지 않아야 한다."""
-    _seed_team(session, "LG", "LG 트윈스")
-    _seed_team(session, "DOO", "두산 베어스")
+    """Normalizing the same Naver schedule payload twice does not duplicate Game rows."""
+    _seed_team(session, "LG", "LG Twins")
+    _seed_team(session, "OB", "Doosan Bears")
     body = json.dumps(
         {
-            "games": [
-                {
-                    "external_id": "20260415LGDOO",
-                    "game_date": "2026-04-15",
-                    "home_team_code": "LG",
-                    "away_team_code": "DOO",
-                    "venue": "잠실야구장",
-                }
-            ]
+            "result": {
+                "games": [
+                    {
+                        "gameId": "20260415OBLG02026",
+                        "gameDate": "2026-04-15",
+                        "homeTeamCode": "LG",
+                        "awayTeamCode": "OB",
+                        "stadium": "Jamsil",
+                    }
+                ]
+            }
         }
     )
     raw = _make_raw_payload(session, ingestion_run, body, category="schedule")
@@ -396,65 +400,130 @@ def test_normalize_roster_html_raises_not_implemented(
 
 
 # ---------------------------------------------------------------------------
-# player_stats normalizer 테스트
+# player_stats normalizer tests
 # ---------------------------------------------------------------------------
+
+
+def _make_naver_preview_body(
+    *,
+    h_code: str = "LG",
+    a_code: str = "OB",
+    hitter_ext_id: str = "LG-H001",
+    hitter_name: str = "홍길동",
+    pitcher_ext_id: str = "LG-P001",
+    pitcher_name: str = "김투수",
+    gdate: int = 20260415,
+    gtime: str = "18:30",
+) -> str:
+    """Build a minimal Naver preview body for player_stats normalizer tests."""
+    return json.dumps(
+        {
+            "result": {
+                "previewData": {
+                    "gameInfo": {
+                        "gdate": gdate,
+                        "gtime": gtime,
+                        "hCode": h_code,
+                        "aCode": a_code,
+                    },
+                    "homeTopPlayer": {
+                        "playerCode": hitter_ext_id,
+                        "playerInfo": {"name": hitter_name, "pCode": hitter_ext_id},
+                        "currentSeasonStats": {
+                            "ab": 100,
+                            "hit": 30,
+                            "hra": "0.300",
+                            "obp": 0.360,
+                            "rbi": 12,
+                            "hr": 3,
+                        },
+                    },
+                    "homeStarter": {
+                        "playerInfo": {"name": pitcher_name, "pCode": pitcher_ext_id},
+                        "currentSeasonStats": {
+                            "era": "3.50",
+                            "whip": "1.20",
+                            "w": 3,
+                            "l": 2,
+                            "kk": 40,
+                            "bb": 15,
+                            "inn": "40.0",
+                        },
+                    },
+                }
+            }
+        }
+    )
 
 
 def test_normalize_player_stats_creates_snapshot_and_rows(
     session: Session, ingestion_run: IngestionRun
 ) -> None:
-    """StatSnapshot과 PlayerStatSnapshotRow가 생성되어야 한다."""
-    team = _seed_team(session, "LG", "LG 트윈스")
-    player = _seed_player(session, team, "LG-P001", "홍길동")
-    body = json.dumps(
-        {
-            "team_code": "LG",
-            "snapshot_at": "2026-04-15T16:00:00+09:00",
-            "rows": [
-                {
-                    "player_external_id": "LG-P001",
-                    "stats": {"OPS": 0.880, "OBP": 0.380, "SLG": 0.500},
-                }
-            ],
-        }
+    """StatSnapshot and PlayerStatSnapshotRow rows are created for hitter and pitcher."""
+    _seed_team(session, "LG", "LG 트윈스")
+    _seed_team(session, "OB", "두산 베어스")
+    hitter = _seed_player(
+        session,
+        session.execute(select(Team).where(Team.code == "LG")).scalar_one(),
+        "LG-H001",
+        "홍길동",
     )
+    pitcher = _seed_player(
+        session,
+        session.execute(select(Team).where(Team.code == "LG")).scalar_one(),
+        "LG-P001",
+        "김투수",
+    )
+    body = _make_naver_preview_body()
     raw = _make_raw_payload(session, ingestion_run, body, category="player_stats")
 
     result = normalize_player_stats(session, raw)
 
-    assert result.rows_created == 1
+    assert result.rows_created == 2
     assert result.rows_skipped == 0
     snapshot = session.get(StatSnapshot, result.snapshot_id)
     assert snapshot is not None
     assert snapshot.ingestion_run_id == ingestion_run.id
-    stat_row = session.execute(
+
+    hitter_row = session.execute(
         select(PlayerStatSnapshotRow).where(
             PlayerStatSnapshotRow.snapshot_id == result.snapshot_id,
-            PlayerStatSnapshotRow.player_id == player.id,
+            PlayerStatSnapshotRow.player_id == hitter.id,
         )
     ).scalar_one()
-    assert stat_row.stats_json["OPS"] == pytest.approx(0.880)
+    assert "obp" in hitter_row.stats_json
+    assert hitter_row.stats_json["role"] == "hitter"
+
+    pitcher_row = session.execute(
+        select(PlayerStatSnapshotRow).where(
+            PlayerStatSnapshotRow.snapshot_id == result.snapshot_id,
+            PlayerStatSnapshotRow.player_id == pitcher.id,
+        )
+    ).scalar_one()
+    assert "era" in pitcher_row.stats_json
+    assert pitcher_row.stats_json["role"] == "pitcher"
 
 
 def test_normalize_player_stats_idempotent_content_hash(
     session: Session, ingestion_run: IngestionRun
 ) -> None:
-    """같은 페이로드를 두 번 정규화해도 StatSnapshot이 중복 생성되지 않아야 한다."""
+    """Normalizing the same payload twice does not create duplicate StatSnapshot rows."""
     _seed_team(session, "LG", "LG 트윈스")
+    _seed_team(session, "OB", "두산 베어스")
+    _seed_player(
+        session,
+        session.execute(select(Team).where(Team.code == "LG")).scalar_one(),
+        "LG-H001",
+        "홍길동",
+    )
     _seed_player(
         session,
         session.execute(select(Team).where(Team.code == "LG")).scalar_one(),
         "LG-P001",
-        "홍길동",
+        "김투수",
     )
 
-    body = json.dumps(
-        {
-            "team_code": "LG",
-            "snapshot_at": "2026-04-15T16:00:00+09:00",
-            "rows": [{"player_external_id": "LG-P001", "stats": {"OPS": 0.880}}],
-        }
-    )
+    body = _make_naver_preview_body()
     raw = _make_raw_payload(session, ingestion_run, body, category="player_stats")
 
     result1 = normalize_player_stats(session, raw)
@@ -468,22 +537,23 @@ def test_normalize_player_stats_idempotent_content_hash(
 def test_normalize_player_stats_needs_review_reason_surfaced(
     session: Session, ingestion_run: IngestionRun
 ) -> None:
-    """알 수 없는 선수는 건너뛰고 needs_review_reasons에 이유가 포함되어야 한다."""
+    """Unknown player is skipped and a reason is recorded in needs_review_reasons."""
     _seed_team(session, "LG", "LG 트윈스")
-    body = json.dumps(
-        {
-            "team_code": "LG",
-            "snapshot_at": "2026-04-15T16:00:00+09:00",
-            "rows": [
-                {"player_external_id": "LG-GHOST", "stats": {"OPS": 0.700}},
-            ],
-        }
+    _seed_team(session, "OB", "두산 베어스")
+    # Only seed the hitter — pitcher will be NOT_FOUND.
+    _seed_player(
+        session,
+        session.execute(select(Team).where(Team.code == "LG")).scalar_one(),
+        "LG-H001",
+        "홍길동",
     )
+
+    body = _make_naver_preview_body(pitcher_ext_id="LG-GHOST", pitcher_name="없는선수")
     raw = _make_raw_payload(session, ingestion_run, body, category="player_stats")
 
     result = normalize_player_stats(session, raw)
 
-    assert result.rows_created == 0
+    assert result.rows_created == 1
     assert result.rows_skipped == 1
     assert len(result.needs_review_reasons) > 0
 
@@ -491,22 +561,23 @@ def test_normalize_player_stats_needs_review_reason_surfaced(
 def test_normalize_player_stats_snapshot_references_ingestion_run(
     session: Session, ingestion_run: IngestionRun
 ) -> None:
-    """StatSnapshot.ingestion_run_id가 raw 페이로드의 ingestion_run_id와 일치해야 한다."""
+    """StatSnapshot.ingestion_run_id matches the raw payload's ingestion_run_id."""
     _seed_team(session, "LG", "LG 트윈스")
+    _seed_team(session, "OB", "두산 베어스")
+    _seed_player(
+        session,
+        session.execute(select(Team).where(Team.code == "LG")).scalar_one(),
+        "LG-H001",
+        "홍길동",
+    )
     _seed_player(
         session,
         session.execute(select(Team).where(Team.code == "LG")).scalar_one(),
         "LG-P001",
-        "홍길동",
+        "김투수",
     )
 
-    body = json.dumps(
-        {
-            "team_code": "LG",
-            "snapshot_at": "2026-04-15T16:00:00+09:00",
-            "rows": [{"player_external_id": "LG-P001", "stats": {}}],
-        }
-    )
+    body = _make_naver_preview_body()
     raw = _make_raw_payload(session, ingestion_run, body, category="player_stats")
 
     result = normalize_player_stats(session, raw)
@@ -519,7 +590,7 @@ def test_normalize_player_stats_snapshot_references_ingestion_run(
 def test_normalize_player_stats_html_raises_not_implemented(
     session: Session, ingestion_run: IngestionRun
 ) -> None:
-    """HTML content_type이면 NotImplementedError를 발생시켜야 한다."""
+    """HTML content_type raises NotImplementedError."""
     raw = _make_raw_payload(
         session,
         ingestion_run,
@@ -537,28 +608,67 @@ def test_normalize_player_stats_html_raises_not_implemented(
 # ---------------------------------------------------------------------------
 
 
-def test_normalize_lineup_lg_home(session: Session, ingestion_run: IngestionRun) -> None:
-    """LG가 홈팀일 때 homeLineup 배열을 선택해야 한다."""
-    lg = _seed_team(session, "LG", "LG 트윈스")
-    doo = _seed_team(session, "DOO", "두산 베어스")
-    game = _seed_game(session, home_team=lg, away_team=doo)
-    player = _seed_player(session, lg, "LG-B001", "홍길동", "CF")
+_PREVIEW_SOURCE_URL = "https://api-gw.sports.naver.com/schedule/games/20260415DOLG02026/preview"
 
-    body = json.dumps(
+
+def _make_preview_body(
+    *,
+    home_code: str,
+    away_code: str,
+    home_lineup: list[dict[str, object]],
+    away_lineup: list[dict[str, object]],
+    gdate: int = 20260415,
+    gtime: str = "18:30",
+) -> str:
+    """Build a minimal Naver preview body for lineup normalizer tests."""
+    return json.dumps(
         {
-            "game_external_id": game.external_id,
-            "team_code": "LG",
-            "announced_at": "2026-04-15T17:30:00+09:00",
-            "homeLineup": [{"player_external_id": "LG-B001", "batting_order": 1, "position": "CF"}],
-            "awayLineup": [],
+            "result": {
+                "previewData": {
+                    "gameInfo": {
+                        "gdate": gdate,
+                        "gtime": gtime,
+                        "hCode": home_code,
+                        "aCode": away_code,
+                    },
+                    "homeTeamLineUp": {"fullLineUp": home_lineup},
+                    "awayTeamLineUp": {"fullLineUp": away_lineup},
+                }
+            }
         }
     )
-    raw = _make_raw_payload(session, ingestion_run, body, category="lineup")
+
+
+_SAMPLE_BATTER = {
+    "playerCode": "LG-B001",
+    "playerName": "홍길동",
+    "position": "8",
+    "batorder": 1,
+    "hitType": "우투좌타",
+    "batsThrows": "좌타",
+}
+
+
+def test_normalize_lineup_lg_home(session: Session, ingestion_run: IngestionRun) -> None:
+    """LG가 홈팀(hCode=LG)일 때 homeTeamLineUp을 선택해야 한다."""
+    lg = _seed_team(session, "LG", "LG 트윈스")
+    doo = _seed_team(session, "DOO", "두산 베어스")
+    _seed_game(session, home_team=lg, away_team=doo, external_id="20260415DOLG0")
+
+    body = _make_preview_body(
+        home_code="LG", away_code="DO", home_lineup=[dict(_SAMPLE_BATTER)], away_lineup=[]
+    )
+    raw = _make_raw_payload(
+        session, ingestion_run, body, category="lineup", source_url=_PREVIEW_SOURCE_URL
+    )
 
     result = normalize_lineup(session, raw)
 
     assert result.rows_created == 1
     assert result.rows_skipped == 0
+    player = session.execute(select(Player).where(Player.external_id == "LG-B001")).scalar_one()
+    assert player.bats == "L"
+    assert player.throws == "R"
     row = session.execute(
         select(ActualLineupSnapshotRow).where(
             ActualLineupSnapshotRow.snapshot_id == result.snapshot_id,
@@ -566,27 +676,22 @@ def test_normalize_lineup_lg_home(session: Session, ingestion_run: IngestionRun)
         )
     ).scalar_one()
     assert row.batting_order == 1
-    assert row.position == "CF"
+    assert row.position == "8"
 
 
 def test_normalize_lineup_lg_away(session: Session, ingestion_run: IngestionRun) -> None:
-    """LG가 어웨이팀일 때 awayLineup 배열을 선택해야 한다."""
+    """LG가 어웨이팀(aCode=LG)일 때 awayTeamLineUp을 선택해야 한다."""
     lg = _seed_team(session, "LG", "LG 트윈스")
     doo = _seed_team(session, "DOO", "두산 베어스")
     # DOO가 홈, LG가 어웨이
-    game = _seed_game(session, home_team=doo, away_team=lg, external_id="20260415DOОЛG")
-    _seed_player(session, lg, "LG-B001", "홍길동", "CF")
+    _seed_game(session, home_team=doo, away_team=lg, external_id="20260415DOLG0")
 
-    body = json.dumps(
-        {
-            "game_external_id": game.external_id,
-            "team_code": "LG",
-            "announced_at": "2026-04-15T17:30:00+09:00",
-            "homeLineup": [],
-            "awayLineup": [{"player_external_id": "LG-B001", "batting_order": 1, "position": "CF"}],
-        }
+    body = _make_preview_body(
+        home_code="DO", away_code="LG", home_lineup=[], away_lineup=[dict(_SAMPLE_BATTER)]
     )
-    raw = _make_raw_payload(session, ingestion_run, body, category="lineup")
+    raw = _make_raw_payload(
+        session, ingestion_run, body, category="lineup", source_url=_PREVIEW_SOURCE_URL
+    )
 
     result = normalize_lineup(session, raw)
 
@@ -598,24 +703,20 @@ def test_normalize_lineup_is_idempotent(session: Session, ingestion_run: Ingesti
     """같은 (game_id, team_id, announced_at) 키로 두 번 정규화해도 스냅샷이 중복되지 않아야 한다."""
     lg = _seed_team(session, "LG", "LG 트윈스")
     doo = _seed_team(session, "DOO", "두산 베어스")
-    game = _seed_game(session, home_team=lg, away_team=doo)
-    _seed_player(session, lg, "LG-B001", "홍길동", "CF")
+    _seed_game(session, home_team=lg, away_team=doo, external_id="20260415DOLG0")
 
-    body = json.dumps(
-        {
-            "game_external_id": game.external_id,
-            "team_code": "LG",
-            "announced_at": "2026-04-15T17:30:00+09:00",
-            "homeLineup": [{"player_external_id": "LG-B001", "batting_order": 1, "position": "CF"}],
-            "awayLineup": [],
-        }
+    body = _make_preview_body(
+        home_code="LG", away_code="DO", home_lineup=[dict(_SAMPLE_BATTER)], away_lineup=[]
     )
-    raw = _make_raw_payload(session, ingestion_run, body, category="lineup")
+    raw = _make_raw_payload(
+        session, ingestion_run, body, category="lineup", source_url=_PREVIEW_SOURCE_URL
+    )
 
     result1 = normalize_lineup(session, raw)
     result2 = normalize_lineup(session, raw)
 
     assert result1.snapshot_id == result2.snapshot_id
+    assert result2.rows_created == 0
     snapshots = session.execute(select(ActualLineupSnapshot)).scalars().all()
     assert len(snapshots) == 1
 
@@ -626,19 +727,14 @@ def test_normalize_lineup_snapshot_references_ingestion_run(
     """ActualLineupSnapshot.ingestion_run_id가 raw 페이로드의 ingestion_run_id와 일치해야 한다."""
     lg = _seed_team(session, "LG", "LG 트윈스")
     doo = _seed_team(session, "DOO", "두산 베어스")
-    game = _seed_game(session, home_team=lg, away_team=doo)
-    _seed_player(session, lg, "LG-B001", "홍길동", "CF")
+    _seed_game(session, home_team=lg, away_team=doo, external_id="20260415DOLG0")
 
-    body = json.dumps(
-        {
-            "game_external_id": game.external_id,
-            "team_code": "LG",
-            "announced_at": "2026-04-15T17:30:00+09:00",
-            "homeLineup": [{"player_external_id": "LG-B001", "batting_order": 1, "position": "CF"}],
-            "awayLineup": [],
-        }
+    body = _make_preview_body(
+        home_code="LG", away_code="DO", home_lineup=[dict(_SAMPLE_BATTER)], away_lineup=[]
     )
-    raw = _make_raw_payload(session, ingestion_run, body, category="lineup")
+    raw = _make_raw_payload(
+        session, ingestion_run, body, category="lineup", source_url=_PREVIEW_SOURCE_URL
+    )
 
     result = normalize_lineup(session, raw)
 
@@ -668,10 +764,63 @@ def test_normalize_lineup_html_raises_not_implemented(
 # ---------------------------------------------------------------------------
 
 
+_RECORD_GAME_ID = "20260415DOLG0"  # away DO, home LG
+_RECORD_SOURCE_URL = "https://api-gw.sports.naver.com/schedule/games/20260415DOLG02026/record"
+
+
+def _make_record_body(
+    *,
+    home_code: str,
+    away_code: str,
+    home_batters: list[dict[str, object]],
+    away_batters: list[dict[str, object]],
+    gdate: int = 20260415,
+    gtime: str = "18:30",
+) -> str:
+    """Build a minimal Naver record body for box_score normalizer tests."""
+    return json.dumps(
+        {
+            "result": {
+                "recordData": {
+                    "gameInfo": {
+                        "gdate": gdate,
+                        "gtime": gtime,
+                        "hCode": home_code,
+                        "aCode": away_code,
+                    },
+                    "battersBoxscore": {"home": home_batters, "away": away_batters},
+                }
+            }
+        }
+    )
+
+
+_SAMPLE_BOX_BATTER = {
+    "playerCode": "LG-B001",
+    "name": "홍길동",
+    "batOrder": 1,
+    "pos": "중",
+    "ab": 4,
+    "hit": 2,
+    "run": 1,
+    "rbi": 1,
+    "hr": 0,
+    "bb": 1,
+    "kk": 0,
+    "sb": 0,
+    "hra": "0.300",
+}
+
+
 def test_normalize_box_score_skips_non_final(session: Session, ingestion_run: IngestionRun) -> None:
-    """gameStatus가 FINAL이 아닌 페이로드는 스냅샷을 생성하지 않아야 한다."""
-    body = json.dumps({"gameStatus": "IN_PROGRESS", "game_external_id": "20260415LGDOO"})
-    raw = _make_raw_payload(session, ingestion_run, body, category="box_score")
+    """LG batters 리스트가 비어 있으면 스냅샷을 생성하지 않아야 한다."""
+    lg = _seed_team(session, "LG", "LG 트윈스")
+    doo = _seed_team(session, "DOO", "두산 베어스")
+    _seed_game(session, home_team=lg, away_team=doo, external_id=_RECORD_GAME_ID)
+    body = _make_record_body(home_code="LG", away_code="DO", home_batters=[], away_batters=[])
+    raw = _make_raw_payload(
+        session, ingestion_run, body, category="box_score", source_url=_RECORD_SOURCE_URL
+    )
 
     result = normalize_box_score(session, raw)
 
@@ -680,61 +829,30 @@ def test_normalize_box_score_skips_non_final(session: Session, ingestion_run: In
     assert result.rows_created == 0
 
 
-def test_normalize_box_score_skips_waiting_status(
-    session: Session, ingestion_run: IngestionRun
-) -> None:
-    """gameStatus가 WAITING이면 스냅샷을 생성하지 않아야 한다."""
-    body = json.dumps({"gameStatus": "WAITING", "game_external_id": "20260415LGDOO"})
-    raw = _make_raw_payload(session, ingestion_run, body, category="box_score")
-
-    result = normalize_box_score(session, raw)
-
-    assert result.skipped_not_final is True
-    assert result.snapshot_id is None
-
-
 def test_normalize_box_score_creates_snapshot_and_rows(
     session: Session, ingestion_run: IngestionRun
 ) -> None:
-    """FINAL 페이로드를 정규화하여 BoxScoreSnapshot과 BoxScoreRow를 생성해야 한다."""
+    """LG 박스스코어를 정규화하여 BoxScoreSnapshot과 BoxScoreRow를 생성해야 한다."""
     lg = _seed_team(session, "LG", "LG 트윈스")
     doo = _seed_team(session, "DOO", "두산 베어스")
-    game = _seed_game(session, home_team=lg, away_team=doo)
+    _seed_game(session, home_team=lg, away_team=doo, external_id=_RECORD_GAME_ID)
     hitter = _seed_player(session, lg, "LG-B001", "홍길동", "1B")
-    pitcher = _seed_player(session, doo, "DOO-P001", "김투수", "P")
 
-    body = json.dumps(
-        {
-            "game_external_id": game.external_id,
-            "taken_at": "2026-04-15T22:00:00+09:00",
-            "gameStatus": "FINAL",
-            "lg_hitters": [
-                {
-                    "player_external_id": "LG-B001",
-                    "at_bats": 4,
-                    "hits": 2,
-                    "runs": 1,
-                    "rbis": 1,
-                    "extra_stats_json": {},
-                }
-            ],
-            "opponent_pitchers": [
-                {
-                    "player_external_id": "DOO-P001",
-                    "innings_pitched": 5.2,
-                    "extra_stats_json": {},
-                }
-            ],
-            "opponent_team_code": "DOO",
-        }
+    body = _make_record_body(
+        home_code="LG",
+        away_code="DO",
+        home_batters=[dict(_SAMPLE_BOX_BATTER)],
+        away_batters=[],
     )
-    raw = _make_raw_payload(session, ingestion_run, body, category="box_score")
+    raw = _make_raw_payload(
+        session, ingestion_run, body, category="box_score", source_url=_RECORD_SOURCE_URL
+    )
 
     result = normalize_box_score(session, raw)
 
     assert result.skipped_not_final is False
     assert result.snapshot_id is not None
-    assert result.rows_created == 2
+    assert result.rows_created == 1
     assert result.rows_skipped == 0
 
     hitter_row = session.execute(
@@ -745,42 +863,36 @@ def test_normalize_box_score_creates_snapshot_and_rows(
     ).scalar_one()
     assert hitter_row.at_bats == 4
     assert hitter_row.hits == 2
+    assert hitter_row.runs == 1
+    assert hitter_row.rbis == 1
     assert hitter_row.innings_pitched is None
-
-    pitcher_row = session.execute(
-        select(BoxScoreRow).where(
-            BoxScoreRow.snapshot_id == result.snapshot_id,
-            BoxScoreRow.player_id == pitcher.id,
-        )
-    ).scalar_one()
-    assert pitcher_row.innings_pitched == pytest.approx(5.2)
-    assert pitcher_row.at_bats is None
+    assert hitter_row.extra_stats_json is not None
+    assert hitter_row.extra_stats_json["hr"] == 0
+    assert hitter_row.extra_stats_json["bb"] == 1
 
 
 def test_normalize_box_score_is_idempotent(session: Session, ingestion_run: IngestionRun) -> None:
     """같은 페이로드를 두 번 정규화해도 BoxScoreSnapshot이 중복 생성되지 않아야 한다."""
     lg = _seed_team(session, "LG", "LG 트윈스")
     doo = _seed_team(session, "DOO", "두산 베어스")
-    game = _seed_game(session, home_team=lg, away_team=doo)
+    _seed_game(session, home_team=lg, away_team=doo, external_id=_RECORD_GAME_ID)
     _seed_player(session, lg, "LG-B001", "홍길동", "1B")
 
-    body = json.dumps(
-        {
-            "game_external_id": game.external_id,
-            "taken_at": "2026-04-15T22:00:00+09:00",
-            "gameStatus": "FINAL",
-            "lg_hitters": [
-                {"player_external_id": "LG-B001", "at_bats": 4, "hits": 2, "runs": 1, "rbis": 1}
-            ],
-            "opponent_pitchers": [],
-        }
+    body = _make_record_body(
+        home_code="LG",
+        away_code="DO",
+        home_batters=[dict(_SAMPLE_BOX_BATTER)],
+        away_batters=[],
     )
-    raw = _make_raw_payload(session, ingestion_run, body, category="box_score")
+    raw = _make_raw_payload(
+        session, ingestion_run, body, category="box_score", source_url=_RECORD_SOURCE_URL
+    )
 
     result1 = normalize_box_score(session, raw)
     result2 = normalize_box_score(session, raw)
 
     assert result1.snapshot_id == result2.snapshot_id
+    assert result2.rows_created == 0
     snapshots = session.execute(select(BoxScoreSnapshot)).scalars().all()
     assert len(snapshots) == 1
 
@@ -791,21 +903,18 @@ def test_normalize_box_score_snapshot_references_ingestion_run(
     """BoxScoreSnapshot.ingestion_run_id가 raw 페이로드의 ingestion_run_id와 일치해야 한다."""
     lg = _seed_team(session, "LG", "LG 트윈스")
     doo = _seed_team(session, "DOO", "두산 베어스")
-    game = _seed_game(session, home_team=lg, away_team=doo)
+    _seed_game(session, home_team=lg, away_team=doo, external_id=_RECORD_GAME_ID)
     _seed_player(session, lg, "LG-B001", "홍길동", "CF")
 
-    body = json.dumps(
-        {
-            "game_external_id": game.external_id,
-            "taken_at": "2026-04-15T22:00:00+09:00",
-            "gameStatus": "FINAL",
-            "lg_hitters": [
-                {"player_external_id": "LG-B001", "at_bats": 3, "hits": 1, "runs": 0, "rbis": 0}
-            ],
-            "opponent_pitchers": [],
-        }
+    body = _make_record_body(
+        home_code="LG",
+        away_code="DO",
+        home_batters=[dict(_SAMPLE_BOX_BATTER)],
+        away_batters=[],
     )
-    raw = _make_raw_payload(session, ingestion_run, body, category="box_score")
+    raw = _make_raw_payload(
+        session, ingestion_run, body, category="box_score", source_url=_RECORD_SOURCE_URL
+    )
 
     result = normalize_box_score(session, raw)
 
@@ -830,55 +939,50 @@ def test_normalize_box_score_html_raises_not_implemented(
         normalize_box_score(session, raw)
 
 
-def test_normalize_box_score_missing_team_code_inferred_with_review_reason(
+def test_normalize_box_score_skips_unknown_players(
     session: Session, ingestion_run: IngestionRun
 ) -> None:
-    """페이로드에 team_code가 없으면 게임으로부터 추론하고 needs_review_reasons에 기록해야 한다."""
+    """선수를 찾지 못하면 행을 건너뛰고 스냅샷은 생성하며 needs_review를 기록해야 한다."""
     lg = _seed_team(session, "LG", "LG 트윈스")
     doo = _seed_team(session, "DOO", "두산 베어스")
-    game = _seed_game(session, home_team=lg, away_team=doo)
-    _seed_player(session, lg, "LG-B001", "홍길동", "1B")
+    _seed_game(session, home_team=lg, away_team=doo, external_id=_RECORD_GAME_ID)
+    # No players seeded.
 
-    # team_code 필드 없음 — 게임 홈/어웨이로부터 LG를 추론해야 함
-    body = json.dumps(
-        {
-            "game_external_id": game.external_id,
-            "taken_at": "2026-04-15T22:00:00+09:00",
-            "gameStatus": "FINAL",
-            "lg_hitters": [
-                {"player_external_id": "LG-B001", "at_bats": 4, "hits": 2, "runs": 1, "rbis": 1}
-            ],
-            "opponent_pitchers": [],
-        }
+    body = _make_record_body(
+        home_code="LG",
+        away_code="DO",
+        home_batters=[dict(_SAMPLE_BOX_BATTER)],
+        away_batters=[],
     )
-    raw = _make_raw_payload(session, ingestion_run, body, category="box_score")
+    raw = _make_raw_payload(
+        session, ingestion_run, body, category="box_score", source_url=_RECORD_SOURCE_URL
+    )
 
     result = normalize_box_score(session, raw)
 
-    # 추론된 team_code='LG'로 매칭이 성공해야 함
-    assert result.rows_created == 1
-    # 감사 추적용 reason이 기록되어야 함
-    assert any("team_code not specified" in r for r in result.needs_review_reasons)
+    assert result.rows_created == 0
+    assert result.rows_skipped == 1
+    assert result.needs_review_reasons
+    assert result.snapshot_id is not None
 
 
-def test_normalize_box_score_missing_team_code_raises_when_lg_not_in_game(
+def test_normalize_box_score_raises_when_lg_not_in_game(
     session: Session, ingestion_run: IngestionRun
 ) -> None:
-    """team_code 없고 게임 양 팀 모두 LG가 아니면 ValueError를 발생시켜야 한다."""
+    """게임 양 팀 모두 LG가 아니면 ValueError를 발생시켜야 한다."""
     doo = _seed_team(session, "DOO", "두산 베어스")
     ssg = _seed_team(session, "SSG", "SSG 랜더스")
-    game = _seed_game(session, home_team=doo, away_team=ssg, external_id="20260415DOOSSG")
+    _seed_game(session, home_team=doo, away_team=ssg, external_id=_RECORD_GAME_ID)
 
-    body = json.dumps(
-        {
-            "game_external_id": game.external_id,
-            "taken_at": "2026-04-15T22:00:00+09:00",
-            "gameStatus": "FINAL",
-            "lg_hitters": [],
-            "opponent_pitchers": [],
-        }
+    body = _make_record_body(
+        home_code="DO",
+        away_code="SS",
+        home_batters=[dict(_SAMPLE_BOX_BATTER)],
+        away_batters=[],
     )
-    raw = _make_raw_payload(session, ingestion_run, body, category="box_score")
+    raw = _make_raw_payload(
+        session, ingestion_run, body, category="box_score", source_url=_RECORD_SOURCE_URL
+    )
 
-    with pytest.raises(ValueError, match="missing 'team_code'"):
+    with pytest.raises(ValueError, match="LG not in game"):
         normalize_box_score(session, raw)

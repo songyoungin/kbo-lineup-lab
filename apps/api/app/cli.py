@@ -17,7 +17,7 @@ app = typer.Typer(help="LG Twins ingestion + evaluation pipeline runner.")
 def ingest_daily(
     date_arg: str = typer.Option(..., "--date", help="ISO date (YYYY-MM-DD) to ingest for."),
 ) -> None:
-    """수집 날짜의 스케줄·로스터·선수 스탯을 수집한다."""
+    """Collect the schedule and, for each LG game, lineup, stats, and box score."""
     target = date.fromisoformat(date_arg)
     result = run_daily_pipeline(target_date=target)
     typer.echo(result.summary())
