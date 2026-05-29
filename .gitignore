@@ -32,3 +32,6 @@ apps/web/out/
 .idea/
 *.swp
 *.swo
+
+# Serena MCP (local tooling cache/config)
+.serena/
