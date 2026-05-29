@@ -240,6 +240,9 @@ def normalize_lineup(
         )
 
     entries = lineup_block.get("fullLineUp") or []
+    # content_hash is informational only — this snapshot deduplicates on the
+    # natural key (game_id, team_id, announced_at), not on content_hash (unlike
+    # StatSnapshot / BoxScoreSnapshot which use content_hash as their dedup key).
     content_hash = compute_content_hash(entries)
     new_snapshot = ActualLineupSnapshot(
         game_id=game.id,

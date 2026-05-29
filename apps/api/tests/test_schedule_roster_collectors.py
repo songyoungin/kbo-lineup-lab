@@ -25,8 +25,8 @@ from sqlalchemy.orm import Session, sessionmaker
 
 import app.models  # noqa: F401 — registers all models with Base.metadata
 from app.db.base import Base
+from app.ingestion.collectors._constants import LG_TEAM_CODE
 from app.ingestion.collectors.roster import build_roster_url, collect_lg_roster
-from app.ingestion.collectors.schedule import LG_TEAM_CODE
 from app.ingestion.http_client import USER_AGENT, FetchError, HttpClient
 from app.models.snapshot import IngestionRun
 

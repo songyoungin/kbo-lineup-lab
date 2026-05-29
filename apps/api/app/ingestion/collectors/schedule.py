@@ -28,14 +28,13 @@ from typing import Final
 
 from sqlalchemy.orm import Session
 
-from app.ingestion.collectors._constants import LG_TEAM_CODE  # noqa: F401 (kept for callers)
 from app.ingestion.http_client import HttpClient
 from app.ingestion.raw_store import save_raw_payload
 from app.ingestion.types import PayloadCategory
 from app.models.snapshot import IngestionRun, RawIngestionPayload
 from app.schemas.ingestion import RawPayloadCreate
 
-__all__ = ["LG_TEAM_CODE", "build_naver_schedule_url", "collect_lg_schedule"]
+__all__ = ["build_naver_schedule_url", "collect_lg_schedule"]
 
 NAVER_SCHEDULE_URL: Final = (
     "https://api-gw.sports.naver.com/schedule/games"

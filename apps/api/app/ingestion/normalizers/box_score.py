@@ -192,6 +192,9 @@ def normalize_box_score(
         )
 
         if match.status == MatchStatus.NOT_FOUND:
+            # Box-only substitutes (not present from the lineup upsert) are skipped
+            # in this MVP — match-only by design.  Upserting box-only players is a
+            # documented follow-up.
             rows_skipped += 1
             needs_review_reasons.append(
                 f"box_score batter skipped — {match.reason} (playerCode={external_id!r})"
