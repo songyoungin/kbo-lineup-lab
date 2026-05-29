@@ -37,7 +37,8 @@ _LG_CODE: Final = "LG"
 _KST: Final = timezone(timedelta(hours=9))
 _HAND_MAP: Final[dict[str, str]] = {"좌": "L", "우": "R", "양": "S"}
 _POSITION_PLAYER_RE: Final = re.compile(r"^([우좌])투([우좌양])타$")
-_PITCHER_RE: Final = re.compile(r"^([우좌])완투수$")
+# Pitchers: "우완투수"/"좌완투수" as well as underhand/sidearm "우완언더" etc.
+_PITCHER_RE: Final = re.compile(r"^([우좌])완.*$")
 # Extracts the Naver game id from ".../schedule/games/{naverId}/preview".
 _GAME_ID_URL_RE: Final = re.compile(r"/schedule/games/([^/]+)/preview")
 
@@ -92,7 +93,8 @@ def _parse_handedness(
         first = bats_throws[0]
         if bats_throws.endswith("타"):
             return _HAND_MAP.get(first), None
-        if bats_throws.endswith("투"):
+        # "투" = overhand throws; "언" = underhand/sidearm — both indicate arm side.
+        if bats_throws.endswith("투") or bats_throws.endswith("언"):
             return None, _HAND_MAP.get(first)
 
     return None, None
@@ -176,6 +178,9 @@ def _upsert_player(session: Session, team_id: int, entry: dict[str, object]) -> 
         select(Player).where(Player.external_id == external_id)
     ).scalar_one_or_none()
     if player is None:
+        # Lineup-sourced players carry the Naver numeric position code (e.g. "8");
+        # acceptable as the roster collector is dropped in Task 7, making the
+        # lineup/box-score payloads the player source of record.
         player = Player(
             team_id=team_id,
             external_id=external_id,
@@ -247,7 +252,7 @@ def normalize_lineup(
     elif away_code == _LG_CODE:
         lineup_block = preview.get("awayTeamLineUp") or {}
     else:
-        raise ValueError("LG not in game")
+        raise ValueError(f"LG not in game: hCode={home_code!r} aCode={away_code!r}")
 
     team = session.execute(select(Team).where(Team.code == _LG_CODE)).scalar_one_or_none()
     if team is None:

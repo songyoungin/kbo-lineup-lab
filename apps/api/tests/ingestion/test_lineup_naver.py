@@ -38,6 +38,7 @@ from app.models.snapshot import (
 )
 from app.models.team import Team
 from app.schemas.ingestion import RawPayloadCreate
+from app.util.time import to_utc
 
 MockHttpBuilder = Callable[[Callable[[httpx.Request], httpx.Response]], HttpClient]
 
@@ -197,6 +198,16 @@ def test_normalize_lineup_creates_snapshot_with_nine_rows(
     assert len(snapshots) == 1
     assert snapshots[0].id == result.snapshot_id
 
+    # announced_at derives from gdate=20250514 gtime=18:30 KST -> 09:30 UTC.
+    # Guards the KST->UTC conversion the (game, team, announced_at) key relies on.
+    expected_announced_at = datetime(2025, 5, 14, 9, 30, tzinfo=UTC)
+    announced_at = snapshots[0].announced_at
+    if announced_at.tzinfo is None:
+        # SQLite returns naive datetimes; compare against the naive UTC instant.
+        assert announced_at == expected_announced_at.replace(tzinfo=None)
+    else:
+        assert to_utc(announced_at) == expected_announced_at
+
     # Nine batter rows.
     rows = (
         session.execute(
@@ -252,6 +263,16 @@ def test_parse_handedness_position_player() -> None:
 
 def test_parse_handedness_pitcher() -> None:
     assert _parse_handedness("좌완투수", "좌투") == (None, "L")
+
+
+def test_parse_handedness_underhand_pitcher() -> None:
+    # Underhand/sidearm hitType (e.g. "우완언더") still yields the throwing arm.
+    assert _parse_handedness("우완언더", "우언") == (None, "R")
+
+
+def test_parse_handedness_hit_type_none() -> None:
+    # hitType None with no usable fallback yields unknown on both sides.
+    assert _parse_handedness(None, "") == (None, None)
 
 
 def test_parse_handedness_switch_hitter() -> None:

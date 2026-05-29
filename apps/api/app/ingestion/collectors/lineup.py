@@ -130,8 +130,10 @@ def collect_lg_lineup(
     url = build_naver_preview_url(kbo_game_id=game_id)
     result = http.fetch(url, headers={"Referer": NAVER_REFERER})
 
-    announced_at = _parse_announced_at(result.body)
-    if not _lineup_is_announced(result.body):
+    # Parse the body once and reuse for both announcement detection and timestamp.
+    preview = _preview_data(result.body)
+    announced_at = _parse_announced_at(preview)
+    if not _lineup_is_announced(preview):
         return LineupCollectionResult(
             status=LineupStatus.WAITING,
             raw_payload=None,
@@ -180,38 +182,35 @@ def _preview_data(body: str) -> dict[str, Any]:
     return preview if isinstance(preview, dict) else {}
 
 
-def _lineup_is_announced(body: str) -> bool:
+def _lineup_is_announced(preview: dict[str, Any]) -> bool:
     """Decide whether the response represents an announced lineup.
 
     A non-empty ``fullLineUp`` list under either ``homeTeamLineUp`` or
     ``awayTeamLineUp`` signals an announced lineup.
 
     Args:
-        body: Raw response body string.
+        preview: The parsed ``result.previewData`` dict (empty if unparseable).
 
     Returns:
-        True when at least one side has a non-empty lineup; False otherwise
-        (including when the body is not valid JSON).
+        True when at least one side has a non-empty lineup; False otherwise.
     """
-    preview = _preview_data(body)
     home = (preview.get("homeTeamLineUp") or {}).get("fullLineUp") or []
     away = (preview.get("awayTeamLineUp") or {}).get("fullLineUp") or []
     return bool(home or away)
 
 
-def _parse_announced_at(body: str) -> datetime | None:
+def _parse_announced_at(preview: dict[str, Any]) -> datetime | None:
     """Derive the announcement timestamp from ``gameInfo`` (KST -> UTC).
 
     Uses ``gdate`` (YYYYMMDD) and ``gtime`` (HH:MM, defaulting to "00:00").
     Informational only; the normalizer computes its own authoritative value.
 
     Args:
-        body: Raw response body string.
+        preview: The parsed ``result.previewData`` dict (empty if unparseable).
 
     Returns:
         UTC-normalised datetime when derivable; None otherwise.
     """
-    preview = _preview_data(body)
     game_info = preview.get("gameInfo") or {}
     gdate_raw = game_info.get("gdate")
     # Naver returns gdate as an int (e.g. 20250514); coerce to a YYYYMMDD string.
