@@ -114,7 +114,9 @@ def run_daily_pipeline(
                 season=target_date.year,
                 http=http_client,
             )
-            # TODO(Task 7): replace season= with game_id= when daily pipeline is wired.
+            # TODO(Task 7): pipeline is intentionally broken here —
+            # collect_lg_hitter_season_stats no longer accepts season=; Task 7
+            # replaces this with game_id=. type: ignore keeps mypy green until then.
             _, season_stats_created = collect_lg_hitter_season_stats(  # type: ignore[call-arg]
                 session=session,
                 ingestion_run=run,

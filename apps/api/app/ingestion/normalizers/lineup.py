@@ -9,11 +9,9 @@ the Player rows it references (including batting/throwing handedness parsed from
 
 from __future__ import annotations
 
-import hashlib
 import json
 import re
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
 from typing import Final
 from urllib.parse import urlsplit
 
@@ -21,6 +19,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.ingestion.game_id import naver_to_kbo
+from app.ingestion.normalizers._shared import compute_content_hash, parse_game_datetime_kst
 from app.models.game import Game
 from app.models.player import Player
 from app.models.snapshot import (
@@ -29,12 +28,10 @@ from app.models.snapshot import (
     RawIngestionPayload,
 )
 from app.models.team import Team
-from app.util.time import to_utc
 
 __all__ = ["LineupNormalizeResult", "normalize_lineup"]
 
 _LG_CODE: Final = "LG"
-_KST: Final = timezone(timedelta(hours=9))
 _HAND_MAP: Final[dict[str, str]] = {"좌": "L", "우": "R", "양": "S"}
 _POSITION_PLAYER_RE: Final = re.compile(r"^([우좌])투([우좌양])타$")
 # Pitchers: "우완투수"/"좌완투수" as well as underhand/sidearm "우완언더" etc.
@@ -58,12 +55,6 @@ class LineupNormalizeResult:
     rows_created: int
     rows_skipped: int
     needs_review_reasons: tuple[str, ...]
-
-
-def _compute_content_hash(canonical: object) -> str:
-    """Return the SHA-256 hash of the canonical JSON serialization."""
-    text = json.dumps(canonical, sort_keys=True, separators=(",", ":"), default=str)
-    return hashlib.sha256(text.encode()).hexdigest()
 
 
 def _parse_handedness(
@@ -98,33 +89,6 @@ def _parse_handedness(
             return None, _HAND_MAP.get(first)
 
     return None, None
-
-
-def _derive_announced_at(game_info: dict[str, object]) -> datetime:
-    """Derive a deterministic UTC announcement timestamp from gameInfo.
-
-    Args:
-        game_info: ``previewData.gameInfo`` dict with gdate/gtime.
-
-    Returns:
-        UTC datetime built from gdate + gtime interpreted as KST.
-
-    Raises:
-        ValueError: If gdate is missing or unparseable.
-    """
-    gdate_raw = game_info.get("gdate")
-    # Naver returns gdate as an int (e.g. 20250514); coerce to a YYYYMMDD string.
-    gdate = str(gdate_raw) if isinstance(gdate_raw, int) else gdate_raw
-    if not isinstance(gdate, str) or len(gdate) != 8:
-        raise ValueError(f"lineup payload gameInfo missing valid gdate: {gdate_raw!r}")
-    gtime = game_info.get("gtime")
-    if not isinstance(gtime, str) or not gtime.strip():
-        gtime = "00:00"
-    try:
-        local = datetime.strptime(f"{gdate} {gtime}", "%Y%m%d %H:%M").replace(tzinfo=_KST)
-    except ValueError as exc:
-        raise ValueError(f"lineup payload gameInfo has invalid gdate/gtime: {exc}") from exc
-    return to_utc(local)
 
 
 def _resolve_game(session: Session, source_url: str) -> Game:
@@ -258,7 +222,7 @@ def normalize_lineup(
     if team is None:
         raise ValueError(f"unknown team code: {_LG_CODE!r}")
 
-    announced_at = _derive_announced_at(game_info)
+    announced_at = parse_game_datetime_kst(game_info)
 
     existing_snapshot = session.execute(
         select(ActualLineupSnapshot).where(
@@ -276,7 +240,7 @@ def normalize_lineup(
         )
 
     entries = lineup_block.get("fullLineUp") or []
-    content_hash = _compute_content_hash(entries)
+    content_hash = compute_content_hash(entries)
     new_snapshot = ActualLineupSnapshot(
         game_id=game.id,
         team_id=team.id,

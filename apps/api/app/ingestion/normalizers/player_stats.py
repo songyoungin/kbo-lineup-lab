@@ -15,28 +15,25 @@ The LG side (home or away) is determined from ``gameInfo.hCode`` / ``aCode``.
 Idempotency
 -----------
 ``StatSnapshot.content_hash`` (UNIQUE) is computed over the canonical extracted
-stats dict plus the raw payload id.  Re-running the same payload produces no
-new rows.
+stats dict plus the raw payload id.  Including the payload id is safe only
+because ``save_raw_payload`` dedups on (source_name, source_url, payload_hash):
+an identical preview always maps to the same payload id, so the hash — and
+therefore idempotency — stays stable across re-runs.
 """
 
 from __future__ import annotations
 
-import hashlib
 import json
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
-from typing import Final
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.ingestion.normalizers._shared import compute_content_hash, parse_game_datetime_kst
 from app.ingestion.player_matcher import MatchStatus, match_player
 from app.models.snapshot import PlayerStatSnapshotRow, RawIngestionPayload, StatSnapshot
-from app.util.time import to_utc
 
 __all__ = ["PlayerStatsNormalizeResult", "normalize_player_stats"]
-
-_KST: Final = timezone(timedelta(hours=9))
 
 
 @dataclass(frozen=True)
@@ -56,42 +53,6 @@ class PlayerStatsNormalizeResult:
     needs_review_reasons: tuple[str, ...]
 
 
-def _compute_content_hash(canonical: object) -> str:
-    """Return the SHA-256 hex digest of the canonical JSON representation.
-
-    Args:
-        canonical: Any JSON-serialisable object.
-
-    Returns:
-        64-character lowercase hex digest.
-    """
-    text = json.dumps(canonical, sort_keys=True, separators=(",", ":"), default=str)
-    return hashlib.sha256(text.encode()).hexdigest()
-
-
-def _parse_snapshot_at(game_info: dict[str, object]) -> datetime:
-    """Derive a UTC snapshot timestamp from ``gameInfo.gdate`` and ``gtime``.
-
-    Args:
-        game_info: The ``gameInfo`` dict from ``result.previewData``.
-
-    Returns:
-        UTC-normalised datetime.  Falls back to midnight KST on the game date
-        when ``gtime`` is absent or blank.
-
-    Raises:
-        ValueError: If ``gdate`` is missing or cannot be parsed as YYYYMMDD.
-    """
-    gdate_raw = game_info.get("gdate")
-    gdate = str(gdate_raw) if isinstance(gdate_raw, int) else gdate_raw
-    if not isinstance(gdate, str) or len(gdate) != 8:
-        raise ValueError(f"gameInfo.gdate missing or invalid: {gdate_raw!r}")
-    gtime_raw = game_info.get("gtime")
-    gtime = gtime_raw if isinstance(gtime_raw, str) and gtime_raw.strip() else "00:00"
-    local = datetime.strptime(f"{gdate} {gtime}", "%Y%m%d %H:%M").replace(tzinfo=_KST)
-    return to_utc(local)
-
-
 def normalize_player_stats(
     session: Session,
     raw_payload: RawIngestionPayload,
@@ -106,8 +67,10 @@ def normalize_player_stats(
     (slg, ops, wrcPlus, woba) are **not** fabricated.
 
     StatSnapshot idempotency is enforced via ``content_hash`` (UNIQUE constraint).
+    The hash includes ``raw_payload.id``, which is stable across re-runs because
+    ``save_raw_payload`` dedups by (source_name, source_url, payload_hash).
     Re-processing an identical payload returns the existing snapshot with
-    ``rows_created=0``.
+    ``rows_created=0`` and ``rows_skipped=0``.
 
     Players are matched via :func:`~app.ingestion.player_matcher.match_player`
     using ``team_code="LG"`` and the source ``external_id``.  A ``NOT_FOUND``
@@ -149,7 +112,7 @@ def normalize_player_stats(
 
     game_info_raw = preview.get("gameInfo")
     game_info: dict[str, object] = game_info_raw if isinstance(game_info_raw, dict) else {}
-    snapshot_at = _parse_snapshot_at(game_info)
+    snapshot_at = parse_game_datetime_kst(game_info)
 
     h_code = game_info.get("hCode")
     a_code = game_info.get("aCode")
@@ -169,6 +132,8 @@ def normalize_player_stats(
     # Build the entries list: [(external_id, stats_dict, role), ...]
     entries: list[tuple[str, dict[str, object], str]] = []
 
+    # Asymmetric id extraction: topPlayer exposes a top-level ``playerCode``,
+    # while starter has no top-level code — its id lives at ``playerInfo.pCode``.
     if top_player:
         tp_ext_id = top_player.get("playerCode")
         tp_stats_raw = top_player.get("currentSeasonStats")
@@ -185,22 +150,27 @@ def normalize_player_stats(
         if isinstance(st_ext_id, str) and st_ext_id and isinstance(st_stats_raw, dict):
             entries.append((st_ext_id, dict(st_stats_raw), "pitcher"))
 
-    # Content hash over extracted stats + payload id for determinism.
+    # Content hash over extracted stats + payload id for determinism. Including
+    # raw_payload.id is safe ONLY because save_raw_payload dedups on
+    # (source_name, source_url, payload_hash), so an identical preview always maps
+    # to the same payload id — keeping the hash (and thus idempotency) stable.
     canonical = {
         "payload_id": raw_payload.id,
         "entries": {ext_id: stats for ext_id, stats, _ in entries},
     }
-    content_hash = _compute_content_hash(canonical)
+    content_hash = compute_content_hash(canonical)
 
     existing = session.execute(
         select(StatSnapshot).where(StatSnapshot.content_hash == content_hash)
     ).scalar_one_or_none()
 
     if existing is not None:
+        # Re-run of an already-normalized payload: nothing created, nothing
+        # newly skipped (matches the lineup normalizer's early return).
         return PlayerStatsNormalizeResult(
             snapshot_id=existing.id,
             rows_created=0,
-            rows_skipped=len(entries),
+            rows_skipped=0,
             needs_review_reasons=(),
         )
 

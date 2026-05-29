@@ -6,13 +6,15 @@ Covers:
 - normalize_player_stats extracts homeTopPlayer (hitter) and homeStarter (pitcher)
   currentSeasonStats into a single StatSnapshot with 2 PlayerStatSnapshotRow rows
 - Only Naver-provided fields are stored (obp present, slg/ops/wrcPlus/woba absent)
-- Second normalize call is idempotent (rows_created=0, still exactly 1 StatSnapshot)
+- Second normalize call is idempotent (rows_created=0, rows_skipped=0)
+- LG-as-away side selection (aCode=LG) extracts the away* nodes
 
 No real network connections are made; all HTTP uses httpx.MockTransport.
 """
 
 from __future__ import annotations
 
+import json
 from collections.abc import Callable
 from datetime import UTC, date, datetime
 
@@ -107,6 +109,61 @@ def _save_preview_payload(
             fetched_at=datetime.now(UTC),
             content_type="application/json",
             raw_body=load_source("naver/preview_20250514WOLG02025.json"),
+        ),
+    )
+    return payload
+
+
+def _make_preview_body(
+    *,
+    h_code: str,
+    a_code: str,
+    top_key: str,
+    starter_key: str,
+    hitter_ext_id: str,
+    pitcher_ext_id: str,
+) -> str:
+    """Build a minimal synthetic Naver preview body for one LG side.
+
+    Only the nodes the player-stats normalizer reads are populated.
+    """
+    return json.dumps(
+        {
+            "result": {
+                "previewData": {
+                    "gameInfo": {
+                        "gdate": 20250514,
+                        "gtime": "18:30",
+                        "hCode": h_code,
+                        "aCode": a_code,
+                    },
+                    top_key: {
+                        "playerCode": hitter_ext_id,
+                        "playerInfo": {"name": "문성주", "pCode": hitter_ext_id},
+                        "currentSeasonStats": {"ab": 103, "hit": 29, "hra": "0.282", "obp": 0.348},
+                    },
+                    starter_key: {
+                        "playerInfo": {"name": "송승기", "pCode": pitcher_ext_id},
+                        "currentSeasonStats": {"era": "3.40", "whip": "1.16", "w": 2, "l": 3},
+                    },
+                }
+            }
+        }
+    )
+
+
+def _save_body(session: Session, run: IngestionRun, body: str) -> RawIngestionPayload:
+    """Save a synthetic preview body as a PLAYER_STATS raw payload."""
+    payload, _ = save_raw_payload(
+        session,
+        RawPayloadCreate(
+            ingestion_run_id=run.id,
+            category=PayloadCategory.PLAYER_STATS,
+            source_name="naver_sports",
+            source_url=PREVIEW_URL,
+            fetched_at=datetime.now(UTC),
+            content_type="application/json",
+            raw_body=body,
         ),
     )
     return payload
@@ -251,6 +308,58 @@ def test_normalize_player_stats_is_idempotent(
 
     assert first.snapshot_id == second.snapshot_id
     assert second.rows_created == 0
+    assert second.rows_skipped == 0
 
     snapshots = session.execute(select(StatSnapshot)).scalars().all()
     assert len(snapshots) == 1
+
+
+def test_normalize_player_stats_lg_away_side(
+    session: Session,
+) -> None:
+    """When LG is the away team (aCode=LG), away* nodes are extracted."""
+    lg, wo = _seed_teams(session)
+    # WO is home, LG is away for this synthetic game.
+    game = Game(
+        external_id=KBO_GAME_ID,
+        home_team_id=wo.id,
+        away_team_id=lg.id,
+        game_date=date(2025, 5, 14),
+    )
+    session.add(game)
+    session.flush()
+    hitter, pitcher = _seed_lg_players(session, lg)
+
+    run = IngestionRun(source="test:player_stats", status="running")
+    session.add(run)
+    session.flush()
+
+    body = _make_preview_body(
+        h_code="WO",
+        a_code="LG",
+        top_key="awayTopPlayer",
+        starter_key="awayStarter",
+        hitter_ext_id=HITTER_EXTERNAL_ID,
+        pitcher_ext_id=PITCHER_EXTERNAL_ID,
+    )
+    payload = _save_body(session, run, body)
+
+    result = normalize_player_stats(session, payload)
+
+    assert result.rows_created == 2
+
+    hitter_row = session.execute(
+        select(PlayerStatSnapshotRow).where(
+            PlayerStatSnapshotRow.snapshot_id == result.snapshot_id,
+            PlayerStatSnapshotRow.player_id == hitter.id,
+        )
+    ).scalar_one()
+    assert hitter_row.stats_json["role"] == "hitter"
+
+    pitcher_row = session.execute(
+        select(PlayerStatSnapshotRow).where(
+            PlayerStatSnapshotRow.snapshot_id == result.snapshot_id,
+            PlayerStatSnapshotRow.player_id == pitcher.id,
+        )
+    ).scalar_one()
+    assert pitcher_row.stats_json["role"] == "pitcher"
