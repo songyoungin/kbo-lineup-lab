@@ -35,3 +35,7 @@ apps/web/out/
 
 # Serena MCP (local tooling cache/config)
 .serena/
+
+# Local agent/tooling artifacts
+.playwright-mcp/
+.claude/scheduled_tasks.lock
