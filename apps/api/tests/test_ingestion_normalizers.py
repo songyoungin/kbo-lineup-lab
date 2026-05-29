@@ -257,20 +257,22 @@ def test_player_match_is_matched_property(session: Session) -> None:
 
 
 def test_normalize_schedule_creates_games(session: Session, ingestion_run: IngestionRun) -> None:
-    """JSON 일정 페이로드를 파싱하여 Game 행을 생성해야 한다."""
-    lg = _seed_team(session, "LG", "LG 트윈스")
-    doo = _seed_team(session, "DOO", "두산 베어스")
+    """Naver schedule JSON payload is parsed and a Game row is created for the LG game."""
+    lg = _seed_team(session, "LG", "LG Twins")
+    ob = _seed_team(session, "OB", "Doosan Bears")
     body = json.dumps(
         {
-            "games": [
-                {
-                    "external_id": "20260415LGDOO",
-                    "game_date": "2026-04-15",
-                    "home_team_code": "LG",
-                    "away_team_code": "DOO",
-                    "venue": "잠실야구장",
-                }
-            ]
+            "result": {
+                "games": [
+                    {
+                        "gameId": "20260415OBLG02026",
+                        "gameDate": "2026-04-15",
+                        "homeTeamCode": "LG",
+                        "awayTeamCode": "OB",
+                        "stadium": "Jamsil",
+                    }
+                ]
+            }
         }
     )
     raw = _make_raw_payload(session, ingestion_run, body, category="schedule")
@@ -279,28 +281,30 @@ def test_normalize_schedule_creates_games(session: Session, ingestion_run: Inges
 
     assert result.games_created == 1
     assert result.games_existing == 0
-    game = session.execute(select(Game).where(Game.external_id == "20260415LGDOO")).scalar_one()
+    game = session.execute(select(Game).where(Game.external_id == "20260415OBLG0")).scalar_one()
     assert game.home_team_id == lg.id
-    assert game.away_team_id == doo.id
+    assert game.away_team_id == ob.id
     assert str(game.game_date) == "2026-04-15"
-    assert game.venue == "잠실야구장"
+    assert game.venue == "Jamsil"
 
 
 def test_normalize_schedule_is_idempotent(session: Session, ingestion_run: IngestionRun) -> None:
-    """같은 페이로드를 두 번 정규화해도 Game 행이 중복 생성되지 않아야 한다."""
-    _seed_team(session, "LG", "LG 트윈스")
-    _seed_team(session, "DOO", "두산 베어스")
+    """Normalizing the same Naver schedule payload twice does not duplicate Game rows."""
+    _seed_team(session, "LG", "LG Twins")
+    _seed_team(session, "OB", "Doosan Bears")
     body = json.dumps(
         {
-            "games": [
-                {
-                    "external_id": "20260415LGDOO",
-                    "game_date": "2026-04-15",
-                    "home_team_code": "LG",
-                    "away_team_code": "DOO",
-                    "venue": "잠실야구장",
-                }
-            ]
+            "result": {
+                "games": [
+                    {
+                        "gameId": "20260415OBLG02026",
+                        "gameDate": "2026-04-15",
+                        "homeTeamCode": "LG",
+                        "awayTeamCode": "OB",
+                        "stadium": "Jamsil",
+                    }
+                ]
+            }
         }
     )
     raw = _make_raw_payload(session, ingestion_run, body, category="schedule")

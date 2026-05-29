@@ -1,4 +1,4 @@
-"""KBO 일정 raw 페이로드를 Game 도메인 행으로 정규화한다."""
+"""Normalizer that parses Naver KBO schedule JSON into Game domain rows."""
 
 from __future__ import annotations
 
@@ -9,6 +9,7 @@ from datetime import date
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.ingestion.game_id import naver_to_kbo
 from app.models.game import Game
 from app.models.snapshot import RawIngestionPayload
 from app.models.team import Team
@@ -18,12 +19,12 @@ __all__ = ["ScheduleNormalizeResult", "normalize_schedule"]
 
 @dataclass(frozen=True)
 class ScheduleNormalizeResult:
-    """일정 정규화 결과.
+    """Result of normalizing a schedule payload.
 
     Attributes:
-        games_created: 새로 삽입된 Game 행 수.
-        games_existing: 이미 존재하여 건너뛴 Game 행 수.
-        needs_review_reasons: 검토가 필요한 이유 목록.
+        games_created: Number of newly inserted Game rows.
+        games_existing: Number of Game rows skipped because they already exist.
+        needs_review_reasons: Reasons that require manual review.
     """
 
     games_created: int
@@ -35,30 +36,42 @@ def normalize_schedule(
     session: Session,
     raw_payload: RawIngestionPayload,
 ) -> ScheduleNormalizeResult:
-    """raw 일정 페이로드(KBO Official)를 파싱하여 Game 행을 upsert한다.
+    """Parse a Naver schedule JSON payload and upsert Game rows for LG games.
 
-    기대하는 페이로드 형태 (MVP 플레이스홀더 — 실제 샘플로 검증 필요):
-    JSON:
+    Expected payload shape (Naver api-gw.sports.naver.com/schedule/games):
+
+    .. code-block:: json
+
         {
-            "games": [
-                {"external_id": "...", "game_date": "YYYY-MM-DD",
-                 "home_team_code": "LG", "away_team_code": "...", "venue": "..."},
-                ...
-            ]
+            "result": {
+                "games": [
+                    {
+                        "gameId": "20250514WOLG02025",
+                        "gameDate": "2025-05-14",
+                        "homeTeamCode": "LG",
+                        "awayTeamCode": "WO",
+                        "stadium": "Jamsil"
+                    }
+                ]
+            }
         }
 
-    HTML 폴백: MVP에서 미구현. NotImplementedError를 발생시킨다.
+    Only games where ``homeTeamCode`` or ``awayTeamCode`` is ``"LG"`` are
+    inserted (single-team MVP). ``venue`` is populated from ``stadium``; if
+    absent, ``Game.venue`` is left ``None`` (nullable column).
 
     Args:
-        session: 활성 SQLAlchemy 세션. 커밋은 호출자가 담당.
-        raw_payload: raw_ingestion_payloads 행.
+        session: Active SQLAlchemy session. Caller controls the transaction.
+        raw_payload: Row from ``raw_ingestion_payloads``.
 
     Returns:
-        ScheduleNormalizeResult — 생성/기존 게임 수와 검토 필요 이유 목록.
+        ScheduleNormalizeResult with counts of created/existing games and any
+        review reasons.
 
     Raises:
-        NotImplementedError: content_type이 JSON이 아닌 경우.
-        ValueError: 페이로드 JSON 형식이 올바르지 않은 경우.
+        NotImplementedError: If the payload content_type is not JSON.
+        ValueError: If the payload body is not valid JSON or is missing the
+            expected ``result.games`` list.
     """
     if "json" not in raw_payload.content_type.lower():
         raise NotImplementedError(
@@ -71,18 +84,28 @@ def normalize_schedule(
     except json.JSONDecodeError as exc:
         raise ValueError(f"schedule payload is not valid JSON: {exc}") from exc
 
-    games_list = body.get("games")
+    games_list = (body.get("result") or {}).get("games")
     if not isinstance(games_list, list):
-        raise ValueError("schedule payload missing 'games' list")
+        raise ValueError("schedule payload missing result.games list")
 
     games_created = 0
     games_existing = 0
     needs_review_reasons: list[str] = []
 
     for entry in games_list:
-        external_id: str | None = entry.get("external_id")
-        if not external_id:
-            needs_review_reasons.append(f"game entry missing external_id: {entry!r}")
+        home_code = entry.get("homeTeamCode")
+        away_code = entry.get("awayTeamCode")
+        if "LG" not in (home_code, away_code):
+            continue  # single-team MVP: only LG games
+        naver_id = entry.get("gameId")
+        game_date_str = entry.get("gameDate")
+        if not naver_id or not game_date_str:
+            needs_review_reasons.append(f"game entry missing gameId/gameDate: {entry!r}")
+            continue
+        try:
+            external_id = naver_to_kbo(naver_id)
+        except ValueError:
+            needs_review_reasons.append(f"unparseable Naver gameId={naver_id!r}")
             continue
 
         existing = session.execute(
@@ -92,48 +115,28 @@ def normalize_schedule(
             games_existing += 1
             continue
 
-        home_code: str | None = entry.get("home_team_code")
-        away_code: str | None = entry.get("away_team_code")
-        game_date_str: str | None = entry.get("game_date")
-        venue: str | None = entry.get("venue")
-
-        if not home_code or not away_code or not game_date_str:
-            needs_review_reasons.append(
-                f"game {external_id!r} missing required fields "
-                f"(home_team_code, away_team_code, game_date)"
-            )
-            continue
-
         home_team = session.execute(select(Team).where(Team.code == home_code)).scalar_one_or_none()
         away_team = session.execute(select(Team).where(Team.code == away_code)).scalar_one_or_none()
-
-        if home_team is None:
+        if home_team is None or away_team is None:
             needs_review_reasons.append(
-                f"game {external_id!r}: unknown home_team_code={home_code!r}"
+                f"game {external_id!r}: unknown team code(s) home={home_code!r} away={away_code!r}"
             )
             continue
-        if away_team is None:
-            needs_review_reasons.append(
-                f"game {external_id!r}: unknown away_team_code={away_code!r}"
-            )
-            continue
-
         try:
             parsed_date = date.fromisoformat(game_date_str)
         except ValueError:
-            needs_review_reasons.append(
-                f"game {external_id!r}: unparseable game_date={game_date_str!r}"
-            )
+            needs_review_reasons.append(f"game {external_id!r}: bad gameDate={game_date_str!r}")
             continue
 
-        new_game = Game(
-            external_id=external_id,
-            home_team_id=home_team.id,
-            away_team_id=away_team.id,
-            game_date=parsed_date,
-            venue=venue,
+        session.add(
+            Game(
+                external_id=external_id,
+                home_team_id=home_team.id,
+                away_team_id=away_team.id,
+                game_date=parsed_date,
+                venue=entry.get("stadium"),
+            )
         )
-        session.add(new_game)
         session.flush()
         games_created += 1
 

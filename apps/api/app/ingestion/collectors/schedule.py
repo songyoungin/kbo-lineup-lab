@@ -1,31 +1,24 @@
-"""Collector that fetches LG Twins schedule data from KBO Official.
+"""Schedule collector that fetches KBO game data from the Naver Sports API.
 
 Architecture note
 -----------------
-Collectors are responsible for fetching raw source data only. Parsing the HTML
-into domain tables (games, schedule rows, etc.) belongs to the normalizer task
-(Plan 17). This module writes raw HTML to ``raw_ingestion_payloads`` via the
-shared :func:`~app.ingestion.raw_store.save_raw_payload` helper so that the
-normalizer can replay against any parser version without re-fetching.
+Collectors are responsible for fetching raw source data only. Parsing the JSON
+into domain tables (games, schedule rows, etc.) belongs to the normalizer layer.
+This module writes raw JSON to ``raw_ingestion_payloads`` via the shared
+:func:`~app.ingestion.raw_store.save_raw_payload` helper so that the normalizer
+can replay against any parser version without re-fetching.
 
-LG filtering
-------------
-Filtering to LG Twins happens at the *URL level*: the ``teamId`` query
-parameter is set to ``LG``. The KBO Official site returns only LG schedule
-entries for that team code. The normalizer still needs to ignore any
-incidental entries, but the collector does not post-filter.
+Data source
+-----------
+Primary: ``api-gw.sports.naver.com/schedule/games`` (JSON endpoint). The full
+KBO league schedule for the requested date range is returned; the normalizer
+filters down to LG Twins games.
 
-Date range (MVP)
-----------------
-``date_from`` and ``date_to`` bound the range of interest. For MVP the KBO
-Official schedule page returns a full season view, so the collector fetches
-the season identified by ``date_from.year``. Finer date filtering belongs in
-the normalizer (Plan 17).
-
-URL accuracy warning
---------------------
-The URL template below is *tentative*. Verify the live KBO Official site
-before enabling scheduled ingestion runs. See docs/data-sources/kbo-source-matrix.md.
+Date range
+----------
+``date_from`` and ``date_to`` bound the inclusive date range sent to Naver.
+For MVP the collector fetches a single day (``date_from == date_to``), but any
+range is supported.
 """
 
 from __future__ import annotations
@@ -35,34 +28,33 @@ from typing import Final
 
 from sqlalchemy.orm import Session
 
-from app.ingestion.collectors._constants import LG_TEAM_CODE
+from app.ingestion.collectors._constants import LG_TEAM_CODE  # noqa: F401 (kept for callers)
 from app.ingestion.http_client import HttpClient
 from app.ingestion.raw_store import save_raw_payload
 from app.ingestion.types import PayloadCategory
 from app.models.snapshot import IngestionRun, RawIngestionPayload
 from app.schemas.ingestion import RawPayloadCreate
 
-__all__ = ["LG_TEAM_CODE", "build_schedule_url", "collect_lg_schedule"]
+__all__ = ["LG_TEAM_CODE", "build_naver_schedule_url", "collect_lg_schedule"]
 
-# VERIFY before live use: navigate to https://www.koreabaseball.com/Schedule/Schedule.aspx
-# and confirm the teamId parameter value for LG Twins and the seasonId/seriesId format.
-SCHEDULE_URL_TEMPLATE: Final = (
-    "https://www.koreabaseball.com/Schedule/Schedule.aspx"
-    "?seriesId=0&seasonId={year}&teamId={team_code}"
+NAVER_SCHEDULE_URL: Final = (
+    "https://api-gw.sports.naver.com/schedule/games"
+    "?fields=basic&upperCategoryId=kbaseball&categoryId=kbo&fromDate={frm}&toDate={to}"
 )
+NAVER_REFERER: Final = "https://m.sports.naver.com/"
 
 
-def build_schedule_url(*, year: int, team_code: str = LG_TEAM_CODE) -> str:
-    """Construct the schedule URL for a given year and team.
+def build_naver_schedule_url(*, date_from: date, date_to: date) -> str:
+    """Naver KBO schedule URL for an inclusive date range (full league, not LG-only).
 
     Args:
-        year: KBO season year (e.g. 2026).
-        team_code: KBO team identifier; defaults to ``"LG"``.
+        date_from: Inclusive start of the date range.
+        date_to: Inclusive end of the date range.
 
     Returns:
-        Fully qualified URL string for the KBO Official schedule page.
+        Fully qualified URL string for the Naver KBO schedule endpoint.
     """
-    return SCHEDULE_URL_TEMPLATE.format(year=year, team_code=team_code)
+    return NAVER_SCHEDULE_URL.format(frm=date_from.isoformat(), to=date_to.isoformat())
 
 
 def collect_lg_schedule(
@@ -73,13 +65,9 @@ def collect_lg_schedule(
     date_to: date,
     http: HttpClient,
 ) -> tuple[RawIngestionPayload, bool]:
-    """Fetch the LG Twins schedule for the season covering ``[date_from, date_to]``.
+    """Fetch the KBO schedule for [date_from, date_to] from Naver and store raw JSON.
 
-    The fetched URL is LG-filtered at the source via the ``teamId`` query
-    parameter. The returned payload stores the full HTML page; the normalizer
-    (Plan 17) extracts individual game rows. ``date_from`` and ``date_to``
-    are recorded as metadata — for MVP the KBO page returns a full-season
-    view, so date range enforcement is deferred to the normalizer.
+    The payload holds all KBO games for the range; the normalizer filters to LG.
 
     Args:
         session: Active SQLAlchemy session. Caller controls the transaction.
@@ -94,18 +82,17 @@ def collect_lg_schedule(
         an identical payload (same URL + body hash) was already stored.
 
     Raises:
-        ValueError: If ``date_from`` is later than ``date_to``.
-        FetchError: If the HTTP request fails after retries.
+        ValueError: If date_from is later than date_to.
+        FetchError: If the request fails after retries.
     """
     if date_from > date_to:
         raise ValueError(f"date_from ({date_from}) must not be later than date_to ({date_to})")
-    year = date_from.year
-    url = build_schedule_url(year=year, team_code=LG_TEAM_CODE)
-    result = http.fetch(url)
+    url = build_naver_schedule_url(date_from=date_from, date_to=date_to)
+    result = http.fetch(url, headers={"Referer": NAVER_REFERER})
     payload = RawPayloadCreate(
         ingestion_run_id=ingestion_run.id,
         category=PayloadCategory.SCHEDULE,
-        source_name="kbo_official",
+        source_name="naver_sports",
         source_url=result.url,
         fetched_at=result.fetched_at,
         content_type=result.content_type,
