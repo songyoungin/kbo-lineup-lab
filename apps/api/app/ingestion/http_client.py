@@ -1,7 +1,9 @@
 """Thin HTTP client wrapper for KBO data scraping.
 
-Provides retry logic, a custom User-Agent, timeout enforcement, and a maximum
-response-size cap so that runaway payloads are rejected early.
+Provides retry logic, a custom User-Agent, timeout enforcement, a maximum
+response-size cap so that runaway payloads are rejected early, per-call
+headers (e.g. Referer for Naver), POST support (for the KBO Official backup
+endpoint), and a per-host rate limiter for polite crawling.
 
 Usage::
 
@@ -16,6 +18,7 @@ import time
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Final
+from urllib.parse import urlsplit
 
 import httpx
 
@@ -39,7 +42,7 @@ RETRY_BACKOFF_SECONDS: Final[tuple[float, ...]] = (1.0, 2.0, 4.0)  # backoff per
 
 @dataclass(frozen=True)
 class FetchResult:
-    """Successful response from a single HTTP GET."""
+    """Successful response from a single HTTP request."""
 
     url: str
     status_code: int
@@ -49,7 +52,7 @@ class FetchResult:
 
 
 class FetchError(Exception):
-    """Raised when a fetch fails after retries or violates a safety limit."""
+    """Raised when a request fails after retries or violates a safety limit."""
 
 
 class HttpClient:
@@ -64,7 +67,7 @@ class HttpClient:
         max_bytes: Maximum allowed response body size in bytes. Responses that
             exceed this are rejected with FetchError even when the HTTP status
             is 200.
-        max_retries: Number of fetch attempts before giving up.
+        max_retries: Number of request attempts before giving up.
         user_agent: Value for the ``User-Agent`` request header.
         retry_backoff: Sleep durations (in seconds) between retry attempts.
             Must contain at least ``max_retries - 1`` entries. Pass
@@ -72,9 +75,10 @@ class HttpClient:
         client: Optional pre-built ``httpx.Client``. Inject a client backed by
             ``httpx.MockTransport`` in tests to avoid network access. **When
             ``client`` is provided, ``user_agent`` and ``timeout`` are
-            ignored** — fetches use the injected client's own headers and
-            timeout. Configure those on the client itself before passing it
-            in (e.g. ``httpx.Client(timeout=..., headers={"User-Agent": ...})``).
+            ignored** — requests use the injected client's own headers and
+            timeout.
+        min_interval: Minimum interval (in seconds) between successive requests
+            to the same host. ``0.0`` (default) disables throttling.
     """
 
     def __init__(
@@ -86,6 +90,7 @@ class HttpClient:
         user_agent: str = USER_AGENT,
         retry_backoff: tuple[float, ...] = RETRY_BACKOFF_SECONDS,
         client: httpx.Client | None = None,
+        min_interval: float = 0.0,
     ) -> None:
         self._timeout = timeout
         self._max_bytes = max_bytes
@@ -93,24 +98,59 @@ class HttpClient:
         self._user_agent = user_agent
         self._retry_backoff = retry_backoff
         self._client = client or httpx.Client(timeout=timeout, headers={"User-Agent": user_agent})
+        self._min_interval = min_interval
+        self._last_request_at: dict[str, float] = {}
 
-    def fetch(self, url: str) -> FetchResult:
-        """Synchronously fetch *url* with retries on transient errors.
+    def _throttle(self, url: str) -> None:
+        """Sleep so successive requests to the same host honor min_interval.
 
         Args:
-            url: Fully qualified URL to GET.
+            url: The request URL (used to extract the host).
+        """
+        if self._min_interval <= 0:
+            return
+        host = urlsplit(url).netloc
+        last = self._last_request_at.get(host)
+        now = time.monotonic()
+        if last is not None:
+            wait = self._min_interval - (now - last)
+            if wait > 0:
+                time.sleep(wait)
+        self._last_request_at[host] = time.monotonic()
+
+    def _request(
+        self,
+        method: str,
+        url: str,
+        *,
+        data: dict[str, str] | None,
+        headers: dict[str, str] | None,
+    ) -> FetchResult:
+        """Issue an HTTP request with retries, size limit, and rate limiting.
+
+        Args:
+            method: HTTP method string (``"GET"`` or ``"POST"``).
+            url: Fully qualified request URL.
+            data: Form data to POST. ``None`` for GET.
+            headers: Extra request headers. ``None`` to add nothing.
 
         Returns:
             A :class:`FetchResult` with the response body and metadata.
 
         Raises:
             FetchError: If all retry attempts fail, or if the response body
-                exceeds :attr:`max_bytes`.
+                exceeds max_bytes.
         """
         last_error: Exception | None = None
         for attempt in range(self._max_retries):
             try:
-                response = self._client.get(url)
+                # Throttling per attempt is intentional: each retry is also a real
+                # request to the same host, so it must honor the min_interval spacing.
+                self._throttle(url)
+                if method == "POST":
+                    response = self._client.post(url, data=data, headers=headers)
+                else:
+                    response = self._client.get(url, headers=headers)
                 response.raise_for_status()
                 if len(response.content) > self._max_bytes:
                     raise FetchError(
@@ -136,6 +176,45 @@ class HttpClient:
                     )
                     time.sleep(backoff)
         raise FetchError(f"Failed after {self._max_retries} attempts: {last_error}") from last_error
+
+    def fetch(self, url: str, *, headers: dict[str, str] | None = None) -> FetchResult:
+        """Synchronously GET *url* with retries.
+
+        Args:
+            url: Fully qualified URL to GET.
+            headers: Optional extra request headers (e.g. ``{"Referer": "..."}``).
+
+        Returns:
+            A :class:`FetchResult` with the response body and metadata.
+
+        Raises:
+            FetchError: If all retry attempts fail, or if the response body
+                exceeds max_bytes.
+        """
+        return self._request("GET", url, data=None, headers=headers)
+
+    def post(
+        self,
+        url: str,
+        *,
+        data: dict[str, str],
+        headers: dict[str, str] | None = None,
+    ) -> FetchResult:
+        """POST form-encoded *data* to *url* with retries.
+
+        Args:
+            url: Fully qualified URL to POST.
+            data: Form fields (``application/x-www-form-urlencoded``).
+            headers: Optional extra request headers (e.g. ``{"Referer": "..."}``).
+
+        Returns:
+            A :class:`FetchResult` with the response body and metadata.
+
+        Raises:
+            FetchError: If all retry attempts fail, or if the response body
+                exceeds max_bytes.
+        """
+        return self._request("POST", url, data=data, headers=headers)
 
     def close(self) -> None:
         """Close the underlying httpx client and release connections."""
