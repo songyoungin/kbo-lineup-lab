@@ -23,6 +23,10 @@ class Player(Base):
     external_id: Mapped[str] = mapped_column(String(32), unique=True, nullable=False)
     name: Mapped[str] = mapped_column(String(64), nullable=False)
     position: Mapped[str] = mapped_column(String(8), nullable=False)
+    # Batting handedness: "L" / "R" / "S" (switch); None when unknown.
+    bats: Mapped[str | None] = mapped_column(String(8), nullable=True)
+    # Throwing handedness: "L" / "R"; None when unknown.
+    throws: Mapped[str | None] = mapped_column(String(8), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         default=lambda: datetime.now(UTC),

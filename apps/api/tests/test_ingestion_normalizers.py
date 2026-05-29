@@ -541,28 +541,67 @@ def test_normalize_player_stats_html_raises_not_implemented(
 # ---------------------------------------------------------------------------
 
 
-def test_normalize_lineup_lg_home(session: Session, ingestion_run: IngestionRun) -> None:
-    """LG가 홈팀일 때 homeLineup 배열을 선택해야 한다."""
-    lg = _seed_team(session, "LG", "LG 트윈스")
-    doo = _seed_team(session, "DOO", "두산 베어스")
-    game = _seed_game(session, home_team=lg, away_team=doo)
-    player = _seed_player(session, lg, "LG-B001", "홍길동", "CF")
+_PREVIEW_SOURCE_URL = "https://api-gw.sports.naver.com/schedule/games/20260415DOLG02026/preview"
 
-    body = json.dumps(
+
+def _make_preview_body(
+    *,
+    home_code: str,
+    away_code: str,
+    home_lineup: list[dict[str, object]],
+    away_lineup: list[dict[str, object]],
+    gdate: int = 20260415,
+    gtime: str = "18:30",
+) -> str:
+    """Build a minimal Naver preview body for lineup normalizer tests."""
+    return json.dumps(
         {
-            "game_external_id": game.external_id,
-            "team_code": "LG",
-            "announced_at": "2026-04-15T17:30:00+09:00",
-            "homeLineup": [{"player_external_id": "LG-B001", "batting_order": 1, "position": "CF"}],
-            "awayLineup": [],
+            "result": {
+                "previewData": {
+                    "gameInfo": {
+                        "gdate": gdate,
+                        "gtime": gtime,
+                        "hCode": home_code,
+                        "aCode": away_code,
+                    },
+                    "homeTeamLineUp": {"fullLineUp": home_lineup},
+                    "awayTeamLineUp": {"fullLineUp": away_lineup},
+                }
+            }
         }
     )
-    raw = _make_raw_payload(session, ingestion_run, body, category="lineup")
+
+
+_SAMPLE_BATTER = {
+    "playerCode": "LG-B001",
+    "playerName": "홍길동",
+    "position": "8",
+    "batorder": 1,
+    "hitType": "우투좌타",
+    "batsThrows": "좌타",
+}
+
+
+def test_normalize_lineup_lg_home(session: Session, ingestion_run: IngestionRun) -> None:
+    """LG가 홈팀(hCode=LG)일 때 homeTeamLineUp을 선택해야 한다."""
+    lg = _seed_team(session, "LG", "LG 트윈스")
+    doo = _seed_team(session, "DOO", "두산 베어스")
+    _seed_game(session, home_team=lg, away_team=doo, external_id="20260415DOLG0")
+
+    body = _make_preview_body(
+        home_code="LG", away_code="DO", home_lineup=[dict(_SAMPLE_BATTER)], away_lineup=[]
+    )
+    raw = _make_raw_payload(
+        session, ingestion_run, body, category="lineup", source_url=_PREVIEW_SOURCE_URL
+    )
 
     result = normalize_lineup(session, raw)
 
     assert result.rows_created == 1
     assert result.rows_skipped == 0
+    player = session.execute(select(Player).where(Player.external_id == "LG-B001")).scalar_one()
+    assert player.bats == "L"
+    assert player.throws == "R"
     row = session.execute(
         select(ActualLineupSnapshotRow).where(
             ActualLineupSnapshotRow.snapshot_id == result.snapshot_id,
@@ -570,27 +609,22 @@ def test_normalize_lineup_lg_home(session: Session, ingestion_run: IngestionRun)
         )
     ).scalar_one()
     assert row.batting_order == 1
-    assert row.position == "CF"
+    assert row.position == "8"
 
 
 def test_normalize_lineup_lg_away(session: Session, ingestion_run: IngestionRun) -> None:
-    """LG가 어웨이팀일 때 awayLineup 배열을 선택해야 한다."""
+    """LG가 어웨이팀(aCode=LG)일 때 awayTeamLineUp을 선택해야 한다."""
     lg = _seed_team(session, "LG", "LG 트윈스")
     doo = _seed_team(session, "DOO", "두산 베어스")
     # DOO가 홈, LG가 어웨이
-    game = _seed_game(session, home_team=doo, away_team=lg, external_id="20260415DOОЛG")
-    _seed_player(session, lg, "LG-B001", "홍길동", "CF")
+    _seed_game(session, home_team=doo, away_team=lg, external_id="20260415DOLG0")
 
-    body = json.dumps(
-        {
-            "game_external_id": game.external_id,
-            "team_code": "LG",
-            "announced_at": "2026-04-15T17:30:00+09:00",
-            "homeLineup": [],
-            "awayLineup": [{"player_external_id": "LG-B001", "batting_order": 1, "position": "CF"}],
-        }
+    body = _make_preview_body(
+        home_code="DO", away_code="LG", home_lineup=[], away_lineup=[dict(_SAMPLE_BATTER)]
     )
-    raw = _make_raw_payload(session, ingestion_run, body, category="lineup")
+    raw = _make_raw_payload(
+        session, ingestion_run, body, category="lineup", source_url=_PREVIEW_SOURCE_URL
+    )
 
     result = normalize_lineup(session, raw)
 
@@ -602,24 +636,20 @@ def test_normalize_lineup_is_idempotent(session: Session, ingestion_run: Ingesti
     """같은 (game_id, team_id, announced_at) 키로 두 번 정규화해도 스냅샷이 중복되지 않아야 한다."""
     lg = _seed_team(session, "LG", "LG 트윈스")
     doo = _seed_team(session, "DOO", "두산 베어스")
-    game = _seed_game(session, home_team=lg, away_team=doo)
-    _seed_player(session, lg, "LG-B001", "홍길동", "CF")
+    _seed_game(session, home_team=lg, away_team=doo, external_id="20260415DOLG0")
 
-    body = json.dumps(
-        {
-            "game_external_id": game.external_id,
-            "team_code": "LG",
-            "announced_at": "2026-04-15T17:30:00+09:00",
-            "homeLineup": [{"player_external_id": "LG-B001", "batting_order": 1, "position": "CF"}],
-            "awayLineup": [],
-        }
+    body = _make_preview_body(
+        home_code="LG", away_code="DO", home_lineup=[dict(_SAMPLE_BATTER)], away_lineup=[]
     )
-    raw = _make_raw_payload(session, ingestion_run, body, category="lineup")
+    raw = _make_raw_payload(
+        session, ingestion_run, body, category="lineup", source_url=_PREVIEW_SOURCE_URL
+    )
 
     result1 = normalize_lineup(session, raw)
     result2 = normalize_lineup(session, raw)
 
     assert result1.snapshot_id == result2.snapshot_id
+    assert result2.rows_created == 0
     snapshots = session.execute(select(ActualLineupSnapshot)).scalars().all()
     assert len(snapshots) == 1
 
@@ -630,19 +660,14 @@ def test_normalize_lineup_snapshot_references_ingestion_run(
     """ActualLineupSnapshot.ingestion_run_id가 raw 페이로드의 ingestion_run_id와 일치해야 한다."""
     lg = _seed_team(session, "LG", "LG 트윈스")
     doo = _seed_team(session, "DOO", "두산 베어스")
-    game = _seed_game(session, home_team=lg, away_team=doo)
-    _seed_player(session, lg, "LG-B001", "홍길동", "CF")
+    _seed_game(session, home_team=lg, away_team=doo, external_id="20260415DOLG0")
 
-    body = json.dumps(
-        {
-            "game_external_id": game.external_id,
-            "team_code": "LG",
-            "announced_at": "2026-04-15T17:30:00+09:00",
-            "homeLineup": [{"player_external_id": "LG-B001", "batting_order": 1, "position": "CF"}],
-            "awayLineup": [],
-        }
+    body = _make_preview_body(
+        home_code="LG", away_code="DO", home_lineup=[dict(_SAMPLE_BATTER)], away_lineup=[]
     )
-    raw = _make_raw_payload(session, ingestion_run, body, category="lineup")
+    raw = _make_raw_payload(
+        session, ingestion_run, body, category="lineup", source_url=_PREVIEW_SOURCE_URL
+    )
 
     result = normalize_lineup(session, raw)
 
