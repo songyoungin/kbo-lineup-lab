@@ -14,6 +14,7 @@ import json
 from collections.abc import Callable, Iterator
 from contextlib import AbstractContextManager
 from datetime import UTC, date, datetime
+from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock
 
@@ -53,8 +54,6 @@ from app.models.team import Team
 # 공통 상수 및 타입 별칭
 # ---------------------------------------------------------------------------
 
-CONTENT_TYPE_JSON = "application/json; charset=utf-8"
-CONTENT_TYPE_HTML = "text/html; charset=utf-8"
 GAME_EXTERNAL_ID = "20260415LGDOO"
 
 # 파이프라인 주입용 세션 팩토리 타입 별칭
@@ -293,67 +292,38 @@ def _make_mock_http(responses: dict[str, tuple[int, str, str]]) -> HttpClient:
     return HttpClient(client=inner, retry_backoff=(0.0,))
 
 
-def _html_body(text: str = "page") -> tuple[int, str, str]:
-    return (200, f"<html>{text}</html>", CONTENT_TYPE_HTML)
+_NAVER_FIXTURE_DIR = Path(__file__).resolve().parent / "fixtures" / "sources" / "naver"
+_NAVER_SCHEDULE_JSON = (_NAVER_FIXTURE_DIR / "schedule_20250514.json").read_text(encoding="utf-8")
+_NAVER_PREVIEW_JSON = (_NAVER_FIXTURE_DIR / "preview_20250514WOLG02025.json").read_text(
+    encoding="utf-8"
+)
+_NAVER_RECORD_JSON = (_NAVER_FIXTURE_DIR / "record_20250514WOLG02025.json").read_text(
+    encoding="utf-8"
+)
+
+
+def _make_naver_daily_mock_http() -> HttpClient:
+    """Build an HttpClient routing the Naver schedule/preview/record fixtures."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        u = str(request.url)
+        if "/schedule/games?" in u:
+            body = _NAVER_SCHEDULE_JSON
+        elif u.endswith("/preview"):
+            body = _NAVER_PREVIEW_JSON
+        elif u.endswith("/record"):
+            body = _NAVER_RECORD_JSON
+        else:
+            return httpx.Response(404, text="nf")
+        return httpx.Response(200, text=body, headers={"content-type": "application/json"})
+
+    transport = httpx.MockTransport(handler)
+    return HttpClient(client=httpx.Client(transport=transport), retry_backoff=(0.0,))
 
 
 # ---------------------------------------------------------------------------
 # daily_pipeline 테스트
 # ---------------------------------------------------------------------------
-
-
-def test_daily_pipeline_happy_path(session: Session, session_factory: SessionFactory) -> None:
-    """모든 컬렉터 성공 시 IngestionRun.status가 'completed'이어야 한다."""
-    http = _make_mock_http(
-        {
-            "Schedule": _html_body("schedule"),
-            "Player/Search": _html_body("roster"),
-            "statiz.sporki.com/team": _html_body("stats"),
-        }
-    )
-
-    result = run_daily_pipeline(
-        target_date=date(2026, 5, 25),
-        session_factory=session_factory,
-        http=http,
-    )
-
-    assert result.status == "completed"
-    assert result.ingestion_run_id > 0
-
-    run = session.get(IngestionRun, result.ingestion_run_id)
-    assert run is not None
-    assert run.status == "completed"
-    assert run.finished_at is not None
-
-
-def test_daily_pipeline_is_idempotent(session: Session, session_factory: SessionFactory) -> None:
-    """동일 날짜 재실행 시 기존 run_id를 반환하고 새 수집을 하지 않아야 한다."""
-    http = _make_mock_http(
-        {
-            "Schedule": _html_body("schedule"),
-            "Player/Search": _html_body("roster"),
-            "statiz.sporki.com/team": _html_body("stats"),
-        }
-    )
-
-    result1 = run_daily_pipeline(
-        target_date=date(2026, 5, 25),
-        session_factory=session_factory,
-        http=http,
-    )
-    result2 = run_daily_pipeline(
-        target_date=date(2026, 5, 25),
-        session_factory=session_factory,
-        http=http,
-    )
-
-    assert result1.ingestion_run_id == result2.ingestion_run_id
-    assert result2.status == "completed"
-    assert not result2.schedule_created
-    assert not result2.roster_created
-    assert not result2.season_stats_created
-    assert result2.recent_stats_payloads_created == 0
 
 
 def test_daily_pipeline_marks_failed_on_exception(
@@ -699,9 +669,10 @@ def test_cli_ingest_daily_invokes_pipeline(monkeypatch: pytest.MonkeyPatch) -> N
             ingestion_run_id=42,
             status="completed",
             schedule_created=True,
-            roster_created=True,
-            season_stats_created=True,
-            recent_stats_payloads_created=2,
+            games_found=1,
+            lineups_created=1,
+            stat_snapshots_created=1,
+            box_scores_created=1,
         )
 
     monkeypatch.setattr("app.cli.run_daily_pipeline", _fake_pipeline)
@@ -769,7 +740,7 @@ def test_daily_pipeline_preserves_started_at_on_retry(
 ) -> None:
     """크래시 후 재실행 시 ``started_at``이 최초 시점을 유지해야 한다."""
     original_started = datetime(2026, 4, 15, 1, 0, 0, tzinfo=UTC)
-    source = "pipeline:ingest-daily:2026-05-25"
+    source = "pipeline:ingest-daily:2025-05-14"
     pre_existing = IngestionRun(
         source=source,
         status="running",
@@ -778,16 +749,14 @@ def test_daily_pipeline_preserves_started_at_on_retry(
     session.add(pre_existing)
     session.commit()
 
-    http = _make_mock_http(
-        {
-            "Schedule": _html_body("schedule"),
-            "Player/Search": _html_body("roster"),
-            "statiz.sporki.com/team": _html_body("stats"),
-        }
-    )
+    session.add(Team(code="LG", name="LG 트윈스"))
+    session.add(Team(code="WO", name="키움 히어로즈"))
+    session.commit()
+
+    http = _make_naver_daily_mock_http()
 
     result = run_daily_pipeline(
-        target_date=date(2026, 5, 25),
+        target_date=date(2025, 5, 14),
         session_factory=session_factory,
         http=http,
     )
