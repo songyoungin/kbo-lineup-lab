@@ -36,14 +36,26 @@ PRODUCTION_MIN_INTERVAL: float = 5.0
 class DailyPipelineResult:
     """Result of a daily pipeline run.
 
+    The ``*_created`` counts report how many snapshots had at least one NEW row
+    inserted by their normalizer on THIS run (gated on ``rows_created > 0``).
+    They are 0 on the completed-run short-circuit and on a crash-retry where the
+    normalizers' content-hash / natural-key dedup guards fire. A 0 therefore does
+    NOT mean the snapshot is absent from the DB: it may have been created on an
+    earlier run. ``games_found`` is likewise 0 on the completed-run short-circuit
+    path (no schedule re-query happens there).
+
     Attributes:
         ingestion_run_id: PK of the IngestionRun.
         status: "completed" or "failed".
         schedule_created: True when a new schedule payload was stored.
-        games_found: Number of LG games found for the target date.
-        lineups_created: Number of games for which a lineup snapshot was created.
-        stat_snapshots_created: Number of games for which a stat snapshot was created.
-        box_scores_created: Number of games for which a box score snapshot was created.
+        games_found: Number of LG games found for the target date; 0 on the
+            completed-run short-circuit path.
+        lineups_created: Number of games whose lineup normalizer inserted at least
+            one new row on this run (``rows_created > 0``).
+        stat_snapshots_created: Number of games whose player-stats normalizer
+            inserted at least one new row on this run (``rows_created > 0``).
+        box_scores_created: Number of games whose box-score normalizer inserted at
+            least one new row on this run (``rows_created > 0``, not skipped).
         error_message: Exception message when the run failed.
     """
 

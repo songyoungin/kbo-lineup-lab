@@ -20,7 +20,7 @@ from unittest.mock import MagicMock
 
 import httpx
 import pytest
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, func, select
 from sqlalchemy.orm import Session, sessionmaker
 from typer.testing import CliRunner
 
@@ -753,16 +753,45 @@ def test_daily_pipeline_preserves_started_at_on_retry(
     session.add(Team(code="WO", name="키움 히어로즈"))
     session.commit()
 
-    http = _make_naver_daily_mock_http()
-
-    result = run_daily_pipeline(
+    # 최초 실행: 스냅샷을 실제로 생성한다.
+    result1 = run_daily_pipeline(
         target_date=date(2025, 5, 14),
         session_factory=session_factory,
-        http=http,
+        http=_make_naver_daily_mock_http(),
+    )
+    assert result1.status == "completed"
+    run_id = result1.ingestion_run_id
+
+    def _snapshot_counts() -> tuple[int, int, int]:
+        return (
+            session.execute(select(func.count()).select_from(ActualLineupSnapshot)).scalar_one(),
+            session.execute(select(func.count()).select_from(StatSnapshot)).scalar_one(),
+            session.execute(select(func.count()).select_from(BoxScoreSnapshot)).scalar_one(),
+        )
+
+    counts_after_first = _snapshot_counts()
+    assert counts_after_first == (1, 1, 1)
+
+    # 크래시를 모사: 완료된 run을 다시 "running"으로 되돌려 단축 경로를 우회한다.
+    run = session.get(IngestionRun, run_id)
+    assert run is not None
+    run.status = "running"
+    run.finished_at = None
+    session.commit()
+
+    # 재실행: 정규화기의 dedup 가드가 중복 스냅샷 생성을 막아야 한다.
+    result2 = run_daily_pipeline(
+        target_date=date(2025, 5, 14),
+        session_factory=session_factory,
+        http=_make_naver_daily_mock_http(),
     )
 
-    assert result.status == "completed"
-    run = session.get(IngestionRun, result.ingestion_run_id)
+    assert result2.status == "completed"
+    assert result2.ingestion_run_id == run_id
+    # 재진입한 비완료 run에서 스냅샷이 중복 생성되지 않아야 한다.
+    assert _snapshot_counts() == counts_after_first
+
+    run = session.get(IngestionRun, run_id)
     assert run is not None
     # SQLite는 tz 정보를 보존하지 않으므로 naive datetime을 반환한다; UTC 가정하에 비교
     assert run.started_at is not None
