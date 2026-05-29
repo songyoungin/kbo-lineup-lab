@@ -3,6 +3,12 @@
 > Generated 2026-05-25 as part of [Plan 11](../superpowers/plans/11-kbo-data-source-research.md).
 > All URLs and endpoints are candidates — collector implementers must verify each before relying on them.
 > URLs marked "must verify" are known to exist in this shape but exact paths require a live confirmation run.
+>
+> **UPDATE 2026-05-29:** A live confirmation run was done — see
+> [`endpoint-verification-2026-05-29.md`](./endpoint-verification-2026-05-29.md). Key deltas: Naver `api-gw`
+> verified as the richest single source (lineup + handedness + box score, no login); KBO `/ws/` APIs work but
+> are `robots.txt`-disallowed; **STATIZ moved to `statiz.co.kr` and its splits/wRC+ are behind a login wall**;
+> no free source exposes wRC+. Prefer the verification doc over the candidate URLs below where they conflict.
 
 ## Required data types
 
