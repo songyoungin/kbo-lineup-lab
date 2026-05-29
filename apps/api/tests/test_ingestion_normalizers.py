@@ -7,7 +7,7 @@
 - roster: Player 행 생성; 멱등성; HTML → NotImplementedError
 - player_stats: StatSnapshot + 행 생성; content_hash 멱등성; needs_review 이유 노출
 - lineup: team_code 기준 홈/어웨이 선택; 멱등성 (natural key)
-- box_score: gameStatus≠FINAL 페이로드 건너뜀; FINAL 페이로드 정규화
+- box_score: LG 박스스코어 부재 시 건너뜀; recordData 정규화
 - 불변 조건: 모든 스냅샷 행이 raw 페이로드의 ingestion_run_id를 참조
 """
 
@@ -764,10 +764,63 @@ def test_normalize_lineup_html_raises_not_implemented(
 # ---------------------------------------------------------------------------
 
 
+_RECORD_GAME_ID = "20260415DOLG0"  # away DO, home LG
+_RECORD_SOURCE_URL = "https://api-gw.sports.naver.com/schedule/games/20260415DOLG02026/record"
+
+
+def _make_record_body(
+    *,
+    home_code: str,
+    away_code: str,
+    home_batters: list[dict[str, object]],
+    away_batters: list[dict[str, object]],
+    gdate: int = 20260415,
+    gtime: str = "18:30",
+) -> str:
+    """Build a minimal Naver record body for box_score normalizer tests."""
+    return json.dumps(
+        {
+            "result": {
+                "recordData": {
+                    "gameInfo": {
+                        "gdate": gdate,
+                        "gtime": gtime,
+                        "hCode": home_code,
+                        "aCode": away_code,
+                    },
+                    "battersBoxscore": {"home": home_batters, "away": away_batters},
+                }
+            }
+        }
+    )
+
+
+_SAMPLE_BOX_BATTER = {
+    "playerCode": "LG-B001",
+    "name": "홍길동",
+    "batOrder": 1,
+    "pos": "중",
+    "ab": 4,
+    "hit": 2,
+    "run": 1,
+    "rbi": 1,
+    "hr": 0,
+    "bb": 1,
+    "kk": 0,
+    "sb": 0,
+    "hra": "0.300",
+}
+
+
 def test_normalize_box_score_skips_non_final(session: Session, ingestion_run: IngestionRun) -> None:
-    """gameStatus가 FINAL이 아닌 페이로드는 스냅샷을 생성하지 않아야 한다."""
-    body = json.dumps({"gameStatus": "IN_PROGRESS", "game_external_id": "20260415LGDOO"})
-    raw = _make_raw_payload(session, ingestion_run, body, category="box_score")
+    """LG batters 리스트가 비어 있으면 스냅샷을 생성하지 않아야 한다."""
+    lg = _seed_team(session, "LG", "LG 트윈스")
+    doo = _seed_team(session, "DOO", "두산 베어스")
+    _seed_game(session, home_team=lg, away_team=doo, external_id=_RECORD_GAME_ID)
+    body = _make_record_body(home_code="LG", away_code="DO", home_batters=[], away_batters=[])
+    raw = _make_raw_payload(
+        session, ingestion_run, body, category="box_score", source_url=_RECORD_SOURCE_URL
+    )
 
     result = normalize_box_score(session, raw)
 
@@ -776,61 +829,30 @@ def test_normalize_box_score_skips_non_final(session: Session, ingestion_run: In
     assert result.rows_created == 0
 
 
-def test_normalize_box_score_skips_waiting_status(
-    session: Session, ingestion_run: IngestionRun
-) -> None:
-    """gameStatus가 WAITING이면 스냅샷을 생성하지 않아야 한다."""
-    body = json.dumps({"gameStatus": "WAITING", "game_external_id": "20260415LGDOO"})
-    raw = _make_raw_payload(session, ingestion_run, body, category="box_score")
-
-    result = normalize_box_score(session, raw)
-
-    assert result.skipped_not_final is True
-    assert result.snapshot_id is None
-
-
 def test_normalize_box_score_creates_snapshot_and_rows(
     session: Session, ingestion_run: IngestionRun
 ) -> None:
-    """FINAL 페이로드를 정규화하여 BoxScoreSnapshot과 BoxScoreRow를 생성해야 한다."""
+    """LG 박스스코어를 정규화하여 BoxScoreSnapshot과 BoxScoreRow를 생성해야 한다."""
     lg = _seed_team(session, "LG", "LG 트윈스")
     doo = _seed_team(session, "DOO", "두산 베어스")
-    game = _seed_game(session, home_team=lg, away_team=doo)
+    _seed_game(session, home_team=lg, away_team=doo, external_id=_RECORD_GAME_ID)
     hitter = _seed_player(session, lg, "LG-B001", "홍길동", "1B")
-    pitcher = _seed_player(session, doo, "DOO-P001", "김투수", "P")
 
-    body = json.dumps(
-        {
-            "game_external_id": game.external_id,
-            "taken_at": "2026-04-15T22:00:00+09:00",
-            "gameStatus": "FINAL",
-            "lg_hitters": [
-                {
-                    "player_external_id": "LG-B001",
-                    "at_bats": 4,
-                    "hits": 2,
-                    "runs": 1,
-                    "rbis": 1,
-                    "extra_stats_json": {},
-                }
-            ],
-            "opponent_pitchers": [
-                {
-                    "player_external_id": "DOO-P001",
-                    "innings_pitched": 5.2,
-                    "extra_stats_json": {},
-                }
-            ],
-            "opponent_team_code": "DOO",
-        }
+    body = _make_record_body(
+        home_code="LG",
+        away_code="DO",
+        home_batters=[dict(_SAMPLE_BOX_BATTER)],
+        away_batters=[],
     )
-    raw = _make_raw_payload(session, ingestion_run, body, category="box_score")
+    raw = _make_raw_payload(
+        session, ingestion_run, body, category="box_score", source_url=_RECORD_SOURCE_URL
+    )
 
     result = normalize_box_score(session, raw)
 
     assert result.skipped_not_final is False
     assert result.snapshot_id is not None
-    assert result.rows_created == 2
+    assert result.rows_created == 1
     assert result.rows_skipped == 0
 
     hitter_row = session.execute(
@@ -841,42 +863,36 @@ def test_normalize_box_score_creates_snapshot_and_rows(
     ).scalar_one()
     assert hitter_row.at_bats == 4
     assert hitter_row.hits == 2
+    assert hitter_row.runs == 1
+    assert hitter_row.rbis == 1
     assert hitter_row.innings_pitched is None
-
-    pitcher_row = session.execute(
-        select(BoxScoreRow).where(
-            BoxScoreRow.snapshot_id == result.snapshot_id,
-            BoxScoreRow.player_id == pitcher.id,
-        )
-    ).scalar_one()
-    assert pitcher_row.innings_pitched == pytest.approx(5.2)
-    assert pitcher_row.at_bats is None
+    assert hitter_row.extra_stats_json is not None
+    assert hitter_row.extra_stats_json["hr"] == 0
+    assert hitter_row.extra_stats_json["bb"] == 1
 
 
 def test_normalize_box_score_is_idempotent(session: Session, ingestion_run: IngestionRun) -> None:
     """같은 페이로드를 두 번 정규화해도 BoxScoreSnapshot이 중복 생성되지 않아야 한다."""
     lg = _seed_team(session, "LG", "LG 트윈스")
     doo = _seed_team(session, "DOO", "두산 베어스")
-    game = _seed_game(session, home_team=lg, away_team=doo)
+    _seed_game(session, home_team=lg, away_team=doo, external_id=_RECORD_GAME_ID)
     _seed_player(session, lg, "LG-B001", "홍길동", "1B")
 
-    body = json.dumps(
-        {
-            "game_external_id": game.external_id,
-            "taken_at": "2026-04-15T22:00:00+09:00",
-            "gameStatus": "FINAL",
-            "lg_hitters": [
-                {"player_external_id": "LG-B001", "at_bats": 4, "hits": 2, "runs": 1, "rbis": 1}
-            ],
-            "opponent_pitchers": [],
-        }
+    body = _make_record_body(
+        home_code="LG",
+        away_code="DO",
+        home_batters=[dict(_SAMPLE_BOX_BATTER)],
+        away_batters=[],
     )
-    raw = _make_raw_payload(session, ingestion_run, body, category="box_score")
+    raw = _make_raw_payload(
+        session, ingestion_run, body, category="box_score", source_url=_RECORD_SOURCE_URL
+    )
 
     result1 = normalize_box_score(session, raw)
     result2 = normalize_box_score(session, raw)
 
     assert result1.snapshot_id == result2.snapshot_id
+    assert result2.rows_created == 0
     snapshots = session.execute(select(BoxScoreSnapshot)).scalars().all()
     assert len(snapshots) == 1
 
@@ -887,21 +903,18 @@ def test_normalize_box_score_snapshot_references_ingestion_run(
     """BoxScoreSnapshot.ingestion_run_id가 raw 페이로드의 ingestion_run_id와 일치해야 한다."""
     lg = _seed_team(session, "LG", "LG 트윈스")
     doo = _seed_team(session, "DOO", "두산 베어스")
-    game = _seed_game(session, home_team=lg, away_team=doo)
+    _seed_game(session, home_team=lg, away_team=doo, external_id=_RECORD_GAME_ID)
     _seed_player(session, lg, "LG-B001", "홍길동", "CF")
 
-    body = json.dumps(
-        {
-            "game_external_id": game.external_id,
-            "taken_at": "2026-04-15T22:00:00+09:00",
-            "gameStatus": "FINAL",
-            "lg_hitters": [
-                {"player_external_id": "LG-B001", "at_bats": 3, "hits": 1, "runs": 0, "rbis": 0}
-            ],
-            "opponent_pitchers": [],
-        }
+    body = _make_record_body(
+        home_code="LG",
+        away_code="DO",
+        home_batters=[dict(_SAMPLE_BOX_BATTER)],
+        away_batters=[],
     )
-    raw = _make_raw_payload(session, ingestion_run, body, category="box_score")
+    raw = _make_raw_payload(
+        session, ingestion_run, body, category="box_score", source_url=_RECORD_SOURCE_URL
+    )
 
     result = normalize_box_score(session, raw)
 
@@ -926,55 +939,50 @@ def test_normalize_box_score_html_raises_not_implemented(
         normalize_box_score(session, raw)
 
 
-def test_normalize_box_score_missing_team_code_inferred_with_review_reason(
+def test_normalize_box_score_skips_unknown_players(
     session: Session, ingestion_run: IngestionRun
 ) -> None:
-    """페이로드에 team_code가 없으면 게임으로부터 추론하고 needs_review_reasons에 기록해야 한다."""
+    """선수를 찾지 못하면 행을 건너뛰고 스냅샷은 생성하며 needs_review를 기록해야 한다."""
     lg = _seed_team(session, "LG", "LG 트윈스")
     doo = _seed_team(session, "DOO", "두산 베어스")
-    game = _seed_game(session, home_team=lg, away_team=doo)
-    _seed_player(session, lg, "LG-B001", "홍길동", "1B")
+    _seed_game(session, home_team=lg, away_team=doo, external_id=_RECORD_GAME_ID)
+    # No players seeded.
 
-    # team_code 필드 없음 — 게임 홈/어웨이로부터 LG를 추론해야 함
-    body = json.dumps(
-        {
-            "game_external_id": game.external_id,
-            "taken_at": "2026-04-15T22:00:00+09:00",
-            "gameStatus": "FINAL",
-            "lg_hitters": [
-                {"player_external_id": "LG-B001", "at_bats": 4, "hits": 2, "runs": 1, "rbis": 1}
-            ],
-            "opponent_pitchers": [],
-        }
+    body = _make_record_body(
+        home_code="LG",
+        away_code="DO",
+        home_batters=[dict(_SAMPLE_BOX_BATTER)],
+        away_batters=[],
     )
-    raw = _make_raw_payload(session, ingestion_run, body, category="box_score")
+    raw = _make_raw_payload(
+        session, ingestion_run, body, category="box_score", source_url=_RECORD_SOURCE_URL
+    )
 
     result = normalize_box_score(session, raw)
 
-    # 추론된 team_code='LG'로 매칭이 성공해야 함
-    assert result.rows_created == 1
-    # 감사 추적용 reason이 기록되어야 함
-    assert any("team_code not specified" in r for r in result.needs_review_reasons)
+    assert result.rows_created == 0
+    assert result.rows_skipped == 1
+    assert result.needs_review_reasons
+    assert result.snapshot_id is not None
 
 
-def test_normalize_box_score_missing_team_code_raises_when_lg_not_in_game(
+def test_normalize_box_score_raises_when_lg_not_in_game(
     session: Session, ingestion_run: IngestionRun
 ) -> None:
-    """team_code 없고 게임 양 팀 모두 LG가 아니면 ValueError를 발생시켜야 한다."""
+    """게임 양 팀 모두 LG가 아니면 ValueError를 발생시켜야 한다."""
     doo = _seed_team(session, "DOO", "두산 베어스")
     ssg = _seed_team(session, "SSG", "SSG 랜더스")
-    game = _seed_game(session, home_team=doo, away_team=ssg, external_id="20260415DOOSSG")
+    _seed_game(session, home_team=doo, away_team=ssg, external_id=_RECORD_GAME_ID)
 
-    body = json.dumps(
-        {
-            "game_external_id": game.external_id,
-            "taken_at": "2026-04-15T22:00:00+09:00",
-            "gameStatus": "FINAL",
-            "lg_hitters": [],
-            "opponent_pitchers": [],
-        }
+    body = _make_record_body(
+        home_code="DO",
+        away_code="SS",
+        home_batters=[dict(_SAMPLE_BOX_BATTER)],
+        away_batters=[],
     )
-    raw = _make_raw_payload(session, ingestion_run, body, category="box_score")
+    raw = _make_raw_payload(
+        session, ingestion_run, body, category="box_score", source_url=_RECORD_SOURCE_URL
+    )
 
-    with pytest.raises(ValueError, match="missing 'team_code'"):
+    with pytest.raises(ValueError, match="LG not in game"):
         normalize_box_score(session, raw)
