@@ -2,9 +2,12 @@
 
 The collector stores the raw Naver api-gw record JSON. This normalizer extracts
 the LG side of ``result.recordData.battersBoxscore`` into one immutable box-score
-snapshot and creates one row per batter, matching each to a Player via
-:func:`~app.ingestion.player_matcher.match_player`. The game is resolved from the
-Naver game id embedded in the raw payload source URL.
+snapshot and creates one row per batter. Each batter is upserted as a Player
+(keyed on ``playerCode``); box-only substitutes that the lineup normalizer never
+saw are created on the fly (team=LG, position from the box ``pos`` token via
+:func:`~app.ingestion.normalizers._shared.to_position`, handedness left null until
+a preview/lineup provides it). The game is resolved from the Naver game id
+embedded in the raw payload source URL.
 """
 
 from __future__ import annotations
@@ -21,9 +24,11 @@ from app.ingestion.normalizers._shared import (
     compute_content_hash,
     parse_game_datetime_kst,
     resolve_game_from_naver_url,
+    to_position,
 )
-from app.ingestion.player_matcher import MatchStatus, match_player
+from app.models.player import Player
 from app.models.snapshot import BoxScoreRow, BoxScoreSnapshot, RawIngestionPayload
+from app.models.team import Team
 
 __all__ = ["BoxScoreNormalizeResult", "normalize_box_score"]
 
@@ -39,7 +44,7 @@ class BoxScoreNormalizeResult:
         snapshot_id: PK of the created or existing BoxScoreSnapshot. None when the
             game is not yet final.
         rows_created: Number of newly inserted BoxScoreRow rows.
-        rows_skipped: Number of batters skipped because no Player matched.
+        rows_skipped: Number of batters skipped because they had no playerCode.
         skipped_not_final: True when the LG box score is absent (game not final).
         needs_review_reasons: Reasons that require manual review.
     """
@@ -126,6 +131,10 @@ def normalize_box_score(
     taken_at = parse_game_datetime_kst(game_info)
     content_hash = compute_content_hash(lg_batters)
 
+    lg_team = session.execute(select(Team).where(Team.code == LG_TEAM_CODE)).scalar_one_or_none()
+    if lg_team is None:
+        raise ValueError(f"unknown team code: {LG_TEAM_CODE!r}")
+
     existing_snapshot = session.execute(
         select(BoxScoreSnapshot).where(BoxScoreSnapshot.content_hash == content_hash)
     ).scalar_one_or_none()
@@ -155,36 +164,35 @@ def normalize_box_score(
     for entry in lg_batters:
         raw_player_code = entry.get("playerCode")
         external_id = str(raw_player_code) if raw_player_code is not None else None
-        name = entry.get("name")
-        match = match_player(
-            session,
-            team_code=LG_TEAM_CODE,
-            external_id=external_id,
-            name=str(name) if name else None,
-        )
-
-        if match.status == MatchStatus.NOT_FOUND:
-            # Box-only substitutes (not present from the lineup upsert) are skipped
-            # in this MVP — match-only by design.  Upserting box-only players is a
-            # documented follow-up.
+        if external_id is None:
+            # Cannot upsert a Player without a stable identifier.
             rows_skipped += 1
-            needs_review_reasons.append(
-                f"box_score batter skipped — {match.reason} (playerCode={external_id!r})"
-            )
+            needs_review_reasons.append("box_score batter missing playerCode")
             continue
 
-        if match.status == MatchStatus.NEEDS_REVIEW:
-            needs_review_reasons.append(match.reason)
-            if match.player_id is None:
-                rows_skipped += 1
-                continue
+        player = session.execute(
+            select(Player).where(Player.external_id == external_id)
+        ).scalar_one_or_none()
+        if player is None:
+            # Box-only substitute the lineup never saw: create it with the box
+            # position; handedness stays null until a preview/lineup provides it.
+            name = entry.get("name")
+            player = Player(
+                team_id=lg_team.id,
+                external_id=external_id,
+                name=str(name) if name else external_id,
+                position=to_position(entry.get("pos")),
+                bats=None,
+                throws=None,
+            )
+            session.add(player)
+            session.flush()
 
-        assert match.player_id is not None
         extra_stats = {key: entry.get(key) for key in _EXTRA_STAT_KEYS}
         session.add(
             BoxScoreRow(
                 snapshot_id=snapshot_id,
-                player_id=match.player_id,
+                player_id=player.id,
                 at_bats=_int_or_none(entry.get("ab")),
                 hits=_int_or_none(entry.get("hit")),
                 runs=_int_or_none(entry.get("run")),

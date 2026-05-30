@@ -100,13 +100,11 @@ def test_daily_pipeline_naver_end_to_end(session: Session, session_factory: Sess
     assert session.execute(select(func.count()).select_from(StatSnapshot)).scalar() == 1
     assert session.execute(select(func.count()).select_from(BoxScoreSnapshot)).scalar() == 1
 
-    # Box-score rows: the normalizer matches batters to existing Players only (no
-    # upsert).  The fixture has 16 LG batters in the box score but only 10 players
-    # were upserted via the lineup.  Of those 10, exactly 9 also appear as batters
-    # in the box score (playerCode 51111 is in the lineup but never bats).  The
-    # remaining 7 box-only substitutes are intentionally skipped in this MVP
-    # (match-only by design; upserting box-only players is a documented follow-up).
-    assert session.execute(select(func.count()).select_from(BoxScoreRow)).scalar() == 9
+    # Box-score rows: the normalizer upserts box-only substitutes.  The fixture
+    # has 16 LG batters in the box score; 9 also appear in the lineup upsert (the
+    # 10th lineup player, pitcher 51111, never bats) and the remaining 7 box-only
+    # substitutes are now upserted as Players rather than skipped.
+    assert session.execute(select(func.count()).select_from(BoxScoreRow)).scalar() == 16
 
 
 def test_daily_pipeline_naver_is_idempotent(
@@ -136,4 +134,4 @@ def test_daily_pipeline_naver_is_idempotent(
     assert session.execute(select(func.count()).select_from(ActualLineupSnapshot)).scalar() == 1
     assert session.execute(select(func.count()).select_from(StatSnapshot)).scalar() == 1
     assert session.execute(select(func.count()).select_from(BoxScoreSnapshot)).scalar() == 1
-    assert session.execute(select(func.count()).select_from(BoxScoreRow)).scalar() == 9
+    assert session.execute(select(func.count()).select_from(BoxScoreRow)).scalar() == 16

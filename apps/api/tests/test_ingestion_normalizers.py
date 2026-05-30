@@ -7,7 +7,8 @@
 - roster: Player 행 생성; 멱등성; HTML → NotImplementedError
 - player_stats: StatSnapshot + 행 생성; content_hash 멱등성; needs_review 이유 노출
 - lineup: team_code 기준 홈/어웨이 선택; 멱등성 (natural key)
-- box_score: LG 박스스코어 부재 시 건너뜀; recordData 정규화
+- box_score: LG 박스스코어 부재 시 건너뜀; recordData 정규화; 미등록 타자 업서트;
+  playerCode 누락 시 건너뜀
 - 불변 조건: 모든 스냅샷 행이 raw 페이로드의 ingestion_run_id를 참조
 """
 
@@ -676,7 +677,9 @@ def test_normalize_lineup_lg_home(session: Session, ingestion_run: IngestionRun)
         )
     ).scalar_one()
     assert row.batting_order == 1
-    assert row.position == "8"
+    # Naver numeric position code "8" is canonicalized to "CF".
+    assert row.position == "CF"
+    assert player.position == "CF"
 
 
 def test_normalize_lineup_lg_away(session: Session, ingestion_run: IngestionRun) -> None:
@@ -939,19 +942,51 @@ def test_normalize_box_score_html_raises_not_implemented(
         normalize_box_score(session, raw)
 
 
-def test_normalize_box_score_skips_unknown_players(
+def test_normalize_box_score_upserts_unknown_player(
     session: Session, ingestion_run: IngestionRun
 ) -> None:
-    """선수를 찾지 못하면 행을 건너뛰고 스냅샷은 생성하며 needs_review를 기록해야 한다."""
+    """선수를 찾지 못하면 박스스코어 pos로 Player를 업서트하고 행을 생성해야 한다."""
     lg = _seed_team(session, "LG", "LG 트윈스")
     doo = _seed_team(session, "DOO", "두산 베어스")
     _seed_game(session, home_team=lg, away_team=doo, external_id=_RECORD_GAME_ID)
-    # No players seeded.
+    # No players seeded; the box-only batter must be upserted.
 
     body = _make_record_body(
         home_code="LG",
         away_code="DO",
         home_batters=[dict(_SAMPLE_BOX_BATTER)],
+        away_batters=[],
+    )
+    raw = _make_raw_payload(
+        session, ingestion_run, body, category="box_score", source_url=_RECORD_SOURCE_URL
+    )
+
+    result = normalize_box_score(session, raw)
+
+    assert result.rows_created == 1
+    assert result.rows_skipped == 0
+    assert result.snapshot_id is not None
+    # The batter was upserted with the canonical position from pos="중" -> "CF".
+    player = session.execute(select(Player).where(Player.external_id == "LG-B001")).scalar_one()
+    assert player.position == "CF"
+    assert player.team_id == lg.id
+    assert player.bats is None
+    assert player.throws is None
+
+
+def test_normalize_box_score_skips_batter_missing_player_code(
+    session: Session, ingestion_run: IngestionRun
+) -> None:
+    """playerCode가 없으면 업서트할 수 없으므로 건너뛰고 needs_review를 기록해야 한다."""
+    lg = _seed_team(session, "LG", "LG 트윈스")
+    doo = _seed_team(session, "DOO", "두산 베어스")
+    _seed_game(session, home_team=lg, away_team=doo, external_id=_RECORD_GAME_ID)
+
+    batter = {"name": "홍길동", "pos": "중", "ab": 3, "hit": 1}
+    body = _make_record_body(
+        home_code="LG",
+        away_code="DO",
+        home_batters=[batter],
         away_batters=[],
     )
     raw = _make_raw_payload(

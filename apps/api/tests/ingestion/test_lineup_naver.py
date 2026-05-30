@@ -230,6 +230,15 @@ def test_normalize_lineup_creates_snapshot_with_nine_rows(
     assert park.name == "박해민"
     assert park.bats == "L"
     assert park.throws == "R"
+    # Positions are canonicalized: Naver code "8" -> "CF" on both Player and row.
+    assert park.position == "CF"
+    park_row = session.execute(
+        select(ActualLineupSnapshotRow).where(
+            ActualLineupSnapshotRow.snapshot_id == result.snapshot_id,
+            ActualLineupSnapshotRow.player_id == park.id,
+        )
+    ).scalar_one()
+    assert park_row.position == "CF"
 
 
 def test_normalize_lineup_is_idempotent(
