@@ -164,7 +164,14 @@ def run_daily_pipeline(
                     lr = normalize_lineup(session, lineup_result.raw_payload)
                     if lr.rows_created > 0:
                         lineups_created += 1
-                    ps = normalize_player_stats(session, lineup_result.raw_payload)
+                    # Task 5 will collect per-player season payloads before this
+                    # call; today it normalizes whatever PLAYER_STATS payloads the
+                    # run already holds for this game's year.
+                    ps = normalize_player_stats(
+                        session,
+                        game_external_id=game.external_id,
+                        ingestion_run_id=run.id,
+                    )
                     if ps.rows_created > 0:
                         stat_snapshots_created += 1
 

@@ -97,7 +97,7 @@ def test_daily_pipeline_naver_end_to_end(session: Session, session_factory: Sess
     assert games[0].external_id == "20250514WOLG0"
 
     assert session.execute(select(func.count()).select_from(ActualLineupSnapshot)).scalar() == 1
-    assert session.execute(select(func.count()).select_from(StatSnapshot)).scalar() == 1
+    assert len(session.execute(select(StatSnapshot)).scalars().all()) == 1
     assert session.execute(select(func.count()).select_from(BoxScoreSnapshot)).scalar() == 1
 
     # Box-score rows: the normalizer upserts box-only substitutes.  The fixture
@@ -132,6 +132,6 @@ def test_daily_pipeline_naver_is_idempotent(
 
     assert session.execute(select(func.count()).select_from(Game)).scalar() == 1
     assert session.execute(select(func.count()).select_from(ActualLineupSnapshot)).scalar() == 1
-    assert session.execute(select(func.count()).select_from(StatSnapshot)).scalar() == 1
+    assert len(session.execute(select(StatSnapshot)).scalars().all()) == 1
     assert session.execute(select(func.count()).select_from(BoxScoreSnapshot)).scalar() == 1
     assert session.execute(select(func.count()).select_from(BoxScoreRow)).scalar() == 16
