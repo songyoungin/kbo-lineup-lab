@@ -19,6 +19,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.ingestion.game_id import naver_to_kbo
+from app.lineup_model.types import Position
 from app.models.game import Game
 from app.util.time import KST, to_utc
 
@@ -28,6 +29,7 @@ __all__ = [
     "compute_content_hash",
     "parse_game_datetime_kst",
     "resolve_game_from_naver_url",
+    "to_position",
 ]
 
 # The single-team MVP scope sentinel for normalizers: only LG-side data is parsed.
@@ -36,6 +38,45 @@ LG_TEAM_CODE: Final = "LG"
 # Extracts the Naver game id from ".../schedule/games/{naverId}/<sub>" where the
 # sub-resource is either "preview" (lineup/stats) or "record" (box score).
 _GAME_ID_URL_RE: Final = re.compile(r"/schedule/games/([^/]+)/")
+
+# Naver position tokens -> canonical Position. Keys cover the lineup numeric
+# codes (preview fullLineUp.position) and the box-score `pos` tokens (Korean +
+# Sino-Korean numerals). Tokens absent here (box substitution markers like
+# "타"/"주", or multi-position strings like "二유") fall back to DH.
+_POSITION_TOKENS: Final[dict[str, Position]] = {
+    "1": Position.P,
+    "2": Position.C,
+    "3": Position.FIRST,
+    "4": Position.SECOND,
+    "5": Position.THIRD,
+    "6": Position.SHORT,
+    "7": Position.LEFT,
+    "8": Position.CENTER,
+    "9": Position.RIGHT,
+    "0": Position.DH,
+    "투": Position.P,
+    "포": Position.C,
+    "一": Position.FIRST,
+    "二": Position.SECOND,
+    "三": Position.THIRD,
+    "유": Position.SHORT,
+    "좌": Position.LEFT,
+    "중": Position.CENTER,
+    "우": Position.RIGHT,
+    "지": Position.DH,
+}
+
+
+def to_position(raw: object) -> str:
+    """Map a Naver position token (lineup numeric code or box `pos`) to a
+    canonical Position value string, defaulting to "DH" for unknown/substitution
+    tokens.
+    """
+    if isinstance(raw, str):
+        hit = _POSITION_TOKENS.get(raw.strip())
+        if hit is not None:
+            return hit.value
+    return Position.DH.value
 
 
 def compute_content_hash(canonical: object) -> str:

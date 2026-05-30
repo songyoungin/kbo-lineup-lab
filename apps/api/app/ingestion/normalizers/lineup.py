@@ -22,6 +22,7 @@ from app.ingestion.normalizers._shared import (
     compute_content_hash,
     parse_game_datetime_kst,
     resolve_game_from_naver_url,
+    to_position,
 )
 from app.models.player import Player
 from app.models.snapshot import (
@@ -103,7 +104,8 @@ def _upsert_player(session: Session, team_id: int, entry: dict[str, object]) -> 
     """
     external_id = str(entry["playerCode"])
     name = str(entry.get("playerName") or "")
-    position = str(entry.get("position") or "")
+    # Positions are canonicalized to Position enum values via to_position.
+    position = to_position(entry.get("position"))
     hit_type = entry.get("hitType")
     bats_throws = entry.get("batsThrows")
     bats, throws = _parse_handedness(
@@ -115,9 +117,6 @@ def _upsert_player(session: Session, team_id: int, entry: dict[str, object]) -> 
         select(Player).where(Player.external_id == external_id)
     ).scalar_one_or_none()
     if player is None:
-        # Lineup-sourced players carry the Naver numeric position code (e.g. "8");
-        # acceptable as the roster collector is dropped in Task 7, making the
-        # lineup/box-score payloads the player source of record.
         player = Player(
             team_id=team_id,
             external_id=external_id,
@@ -250,7 +249,7 @@ def normalize_lineup(
                 snapshot_id=snapshot_id,
                 player_id=player.id,
                 batting_order=batorder,
-                position=str(entry["position"]),
+                position=to_position(entry["position"]),
             )
         )
         rows_created += 1
