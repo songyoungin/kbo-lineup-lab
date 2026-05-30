@@ -57,7 +57,9 @@ class DailyPipelineResult:
         lineups_created: Number of games whose lineup normalizer inserted at least
             one new row on this run (``rows_created > 0``).
         stat_snapshots_created: Number of games whose player-stats normalizer
-            inserted at least one new row on this run (``rows_created > 0``).
+            inserted at least one new row on this run (``rows_created > 0``). The
+            snapshot now covers every available team hitter (starters +
+            batterCandidate bench), not only the starting nine.
         box_scores_created: Number of games whose box-score normalizer inserted at
             least one new row on this run (``rows_created > 0``, not skipped).
         error_message: Exception message when the run failed.
@@ -203,10 +205,11 @@ def run_daily_pipeline(
                     lr = normalize_lineup(session, lineup_result.raw_payload)
                     if lr.rows_created > 0:
                         lineups_created += 1
-                    # Now that the lineup is known, fetch each batter's season
-                    # record from the per-player Naver endpoint, then normalize
-                    # all PLAYER_STATS payloads of this run into one StatSnapshot
-                    # so the recommender runs on real season stats.
+                    # The lineup normalizer has now upserted both the starters
+                    # and the batterCandidate bench hitters as Player rows. Fetch
+                    # every team hitter's season record, then normalize all
+                    # PLAYER_STATS payloads of this run into one StatSnapshot so
+                    # the recommender runs on the full available-hitter pool.
                     lineup_snapshot = session.get(ActualLineupSnapshot, lr.snapshot_id)
                     if lineup_snapshot is None:
                         raise RuntimeError(
