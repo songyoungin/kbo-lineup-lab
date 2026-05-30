@@ -1,0 +1,57 @@
+name: ingestion-canary
+
+# Daily canary: run the full real-data pipeline against live Naver to prove
+# ingestion still works end-to-end. GitHub runners are ephemeral, so this uses a
+# throwaway SQLite DB unless a KBO_DATABASE_URL repo secret is configured (in which
+# case results persist). `kbo-lab run` exits non-zero on failure, so a broken
+# source or pipeline fails this workflow and alerts.
+
+on:
+  schedule:
+    # 18:00 UTC = 03:00 KST — ingest the KST day whose games have finished.
+    - cron: "0 18 * * *"
+  workflow_dispatch:
+    inputs:
+      date:
+        description: "ISO date to ingest (YYYY-MM-DD). Defaults to yesterday (KST)."
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+
+jobs:
+  ingest:
+    name: kbo-lab run (live Naver)
+    runs-on: ubuntu-latest
+    env:
+      KBO_DATABASE_URL: ${{ secrets.KBO_DATABASE_URL || 'sqlite:////tmp/kbo_lineup_lab_canary.db' }}
+    steps:
+      - uses: actions/checkout@v6.0.2
+
+      - uses: actions/setup-python@v6.2.0
+        with:
+          python-version: "3.13"
+
+      - uses: astral-sh/setup-uv@v8.1.0
+        with:
+          enable-cache: true
+
+      - name: Install dependencies
+        run: uv sync
+
+      - name: Resolve target date (yesterday KST unless provided)
+        id: date
+        env:
+          # Pass the user-controlled dispatch input via env (never interpolate
+          # ${{ }} directly into the shell) to avoid script injection.
+          INPUT_DATE: ${{ inputs.date }}
+        run: |
+          if [ -n "$INPUT_DATE" ]; then
+            echo "value=$INPUT_DATE" >> "$GITHUB_OUTPUT"
+          else
+            echo "value=$(TZ=Asia/Seoul date -d 'yesterday' +%F)" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Run ingestion pipeline (kbo-lab run)
+        run: cd apps/api && uv run kbo-lab run --date "${{ steps.date.outputs.value }}"
