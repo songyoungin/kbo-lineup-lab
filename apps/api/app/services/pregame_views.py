@@ -15,7 +15,12 @@ from app.models.evaluation import LineupEvaluationRun, LineupEvaluationSummary, 
 from app.models.game import Game
 from app.models.player import Player
 from app.models.postgame import PostgameReviewRun
-from app.models.snapshot import ActualLineupSnapshotRow, BoxScoreSnapshot, PlayerStatSnapshotRow
+from app.models.snapshot import (
+    ActualLineupSnapshot,
+    ActualLineupSnapshotRow,
+    BoxScoreSnapshot,
+    PlayerStatSnapshotRow,
+)
 from app.models.team import Team
 from app.schemas.pregame import (
     DifferenceTypeLiteral,
@@ -100,6 +105,21 @@ def _box_score_exists(session: Session, game_id: int) -> bool:
     )
 
 
+def _lineup_snapshot_exists(session: Session, game_id: int, team_id: int) -> bool:
+    """Return True when an actual lineup has been ingested for the team's game."""
+    return (
+        session.execute(
+            select(ActualLineupSnapshot.id)
+            .where(
+                ActualLineupSnapshot.game_id == game_id,
+                ActualLineupSnapshot.team_id == team_id,
+            )
+            .limit(1)
+        ).first()
+        is not None
+    )
+
+
 def _latest_completed_postgame_run(
     session: Session, game_id: int, team_id: int
 ) -> PostgameReviewRun | None:
@@ -153,7 +173,9 @@ def build_team_home(session: Session, team_code: str) -> TeamHomeResponse:
     For MVP with fixture data:
     - "today" is the single game present in the fixture.
     - "recent" is an empty list (no historical game records yet).
-    - Pipeline status is derived from the presence of evaluation run data.
+    - Pipeline status for each stage is derived from the presence of the
+      corresponding ingested data or run (schedule/lineup snapshots, evaluation
+      run, box score, postgame review).
 
     Args:
         session: SQLAlchemy session.
@@ -189,8 +211,10 @@ def build_team_home(session: Session, team_code: str) -> TeamHomeResponse:
         # Derive pipeline status from existence of evaluation run
         completed_run = _latest_completed_run(session, game.id, team_id)
         pipeline_status: dict[str, str] = {
+            # schedule is guaranteed: this block only runs inside `if game is not None`,
+            # so the Game (schedule) row provably exists.
             "schedule": "ok",
-            "lineup": "ok",
+            "lineup": "ok" if _lineup_snapshot_exists(session, game.id, team_id) else "missing",
             "eval": "ok" if completed_run is not None else "missing",
             "box": "ok" if _box_score_exists(session, game.id) else "missing",
             "postgame": (

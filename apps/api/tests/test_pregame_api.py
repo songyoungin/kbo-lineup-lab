@@ -282,6 +282,50 @@ def test_team_home_recent_is_empty_list(client: TestClient) -> None:
     assert resp.json()["recent"] == []
 
 
+def test_team_home_lineup_status_reflects_snapshot() -> None:
+    """pipeline_status['lineup'] is 'missing' with no lineup, 'ok' once one exists."""
+    from sqlalchemy import delete
+
+    from app.models.snapshot import ActualLineupSnapshot, IngestionRun
+    from app.services.pregame_views import build_team_home
+
+    factory, g_id, t_id, _mv_id = _make_session_with_fixture()
+
+    # The fixture seeds a lineup snapshot; remove it so we can test the 'missing' branch.
+    with factory() as s:
+        s.execute(
+            delete(ActualLineupSnapshot).where(
+                ActualLineupSnapshot.game_id == g_id,
+                ActualLineupSnapshot.team_id == t_id,
+            )
+        )
+        s.commit()
+
+    with factory() as s:
+        before = build_team_home(s, "LG")
+        assert before.today is not None
+        assert before.today.pipeline_status["lineup"] == "missing"
+
+    with factory() as s:
+        ingestion = IngestionRun(source="test-lineup", status="completed")
+        s.add(ingestion)
+        s.commit()
+        lineup = ActualLineupSnapshot(
+            game_id=g_id,
+            team_id=t_id,
+            ingestion_run_id=ingestion.id,
+            announced_at=datetime(2026, 4, 15, 8, 30, tzinfo=UTC),
+            content_hash="lineuphash-1",
+        )
+        s.add(lineup)
+        s.commit()
+
+    with factory() as s:
+        after = build_team_home(s, "LG")
+        assert after.today is not None
+        assert after.today.pipeline_status["lineup"] == "ok"
+
+
 def test_team_home_postgame_status_reflects_review_run() -> None:
     """pipeline_status['postgame'] flips to 'ok' once a completed review exists."""
     from sqlalchemy import select
