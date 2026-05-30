@@ -22,9 +22,10 @@ from app.ingestion.normalizers.lineup import normalize_lineup
 from app.ingestion.normalizers.player_stats import normalize_player_stats
 from app.ingestion.normalizers.schedule import normalize_schedule
 from app.jobs._run_tracking import get_or_create_ingestion_run
+from app.lineup_model.types import Position
 from app.models.game import Game
 from app.models.player import Player
-from app.models.snapshot import ActualLineupSnapshotRow, IngestionRun
+from app.models.snapshot import ActualLineupSnapshot, IngestionRun
 
 logger = logging.getLogger(__name__)
 
@@ -83,35 +84,33 @@ class DailyPipelineResult:
         )
 
 
-def _collect_lineup_player_season_stats(
+def _collect_roster_player_season_stats(
     session: Session,
     *,
     ingestion_run: IngestionRun,
-    lineup_snapshot_id: int,
+    team_id: int,
     http: HttpClient,
 ) -> int:
-    """Fetch season stats for each batter in the lineup snapshot.
+    """Fetch season stats for every hitter on the team's roster.
 
-    Only lineup rows with a non-null ``batting_order`` are collected: the
-    starting pitcher has no batting order and is not a recommender candidate, so
-    its season record is not fetched. Each batter's record endpoint is hit once;
-    the production client's per-host throttle keeps these GETs polite.
+    Drives off ``Player`` rows (excluding pitchers, ``position == 'P'``) rather
+    than the announced lineup, so the recommender's candidate pool includes
+    bench hitters — not just the starting nine. Each hitter's record endpoint is
+    hit once; the production client's per-host throttle keeps the GETs polite.
 
     Args:
         session: Active SQLAlchemy session. Caller controls the transaction.
         ingestion_run: Parent ingestion run the fetched payloads belong to.
-        lineup_snapshot_id: PK of the ActualLineupSnapshot whose batters to fetch.
+        team_id: Team whose hitters to fetch (LG in the single-team MVP).
         http: Configured HttpClient. Inject a mock client in tests.
 
     Returns:
-        Number of players whose season stats were fetched.
+        Number of hitters whose season stats were fetched.
     """
     codes = session.execute(
-        select(Player.external_id)
-        .join(ActualLineupSnapshotRow, ActualLineupSnapshotRow.player_id == Player.id)
-        .where(
-            ActualLineupSnapshotRow.snapshot_id == lineup_snapshot_id,
-            ActualLineupSnapshotRow.batting_order.is_not(None),
+        select(Player.external_id).where(
+            Player.team_id == team_id,
+            Player.position != Position.P.value,
         )
     ).scalars()
     count = 0
@@ -208,10 +207,15 @@ def run_daily_pipeline(
                     # record from the per-player Naver endpoint, then normalize
                     # all PLAYER_STATS payloads of this run into one StatSnapshot
                     # so the recommender runs on real season stats.
-                    _collect_lineup_player_season_stats(
+                    lineup_snapshot = session.get(ActualLineupSnapshot, lr.snapshot_id)
+                    if lineup_snapshot is None:
+                        raise RuntimeError(
+                            f"ActualLineupSnapshot {lr.snapshot_id} not found after normalize"
+                        )
+                    _collect_roster_player_season_stats(
                         session,
                         ingestion_run=run,
-                        lineup_snapshot_id=lr.snapshot_id,
+                        team_id=lineup_snapshot.team_id,
                         http=http_client,
                     )
                     ps = normalize_player_stats(
