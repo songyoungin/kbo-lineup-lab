@@ -55,17 +55,17 @@ The evaluator (`app/services/lineup_evaluator.py::build_hitter_stats`) reads the
 
 ---
 
-## Task 1: Verify the per-player season-stat source (live; gate)
+## Task 1: Discover & verify the per-player season-stat API endpoint (one-time; gate)
 
-**You (the human operator) perform this — the agent cannot reach Naver (safety-blocked) and KBO `/ws/` is robots-disallowed.** Produce a verification doc + 2 captured fixtures the later tasks depend on.
+**Discovery is one-time and manual; all runtime extraction is pure HTTP API.** The collector in Task 3 calls the endpoint with `httpx` — never a browser. Chrome DevTools is used here ONLY to read the exact request URL the Naver player SPA fires, because the URL is assembled at runtime from minified template literals and cannot be reliably reconstructed by grepping the JS bundle. (Confirmed: the bundle `…/player-end/260518-153852/static/js/main.cab9d926.js` references host `api-gw.sports.naver.com` and path fragments `/player/`, `/record/`, `playerId`, `categoryId`, `seasonCategory`, `/playerend-record`, `/vs-player-stats`, and the key `"OPS"` — but the segments are concatenated at runtime, so the full path must be read live once.) Produce a verification doc + 2 captured fixtures the later tasks depend on.
 
 **Files:**
 - Create: `docs/data-sources/player-season-stats-verification.md`
 - Create: `apps/api/tests/fixtures/sources/naver/player_season_62415.json` (박해민) and `player_season_69102.json` (문보경)
 
-- [ ] **Step 1: Find the Naver per-player season-stat XHR**
+- [ ] **Step 1: Read the exact season-stat request URL from DevTools (discovery only)**
 
-In Chrome, open `https://m.sports.naver.com/player/index?playerId=62415&category=kbo` (the player page is a React SPA, so the endpoint only appears at runtime). Open DevTools → Network → XHR/Fetch, reload, and look for a request to `api-gw.sports.naver.com/...` whose JSON response contains season batting rows (keys like `ab`, `hit`, `hra`, `obp`, and a season id / year). Copy its exact URL and request headers (it will need `User-Agent` + `Referer: https://m.sports.naver.com/`).
+In Chrome, open `https://m.sports.naver.com/player/index?playerId=62415&category=kbo` (the player page is a React SPA, so the endpoint only appears at runtime). Open DevTools → Network → Fetch/XHR, reload, and find the request to `api-gw.sports.naver.com/...` whose JSON response contains season batting rows (keys like `ab`, `hit`, `hra`, `obp`, and a season id / year). Likely path shape based on the bundle: `…/record/…` with `playerId`/`categoryId` (category `kbo`). Copy its **exact URL** and request headers. This is the only manual step — from here on everything is API/CLI. Headers needed for the API call: `User-Agent` + `Referer: https://m.sports.naver.com/`.
 
 - [ ] **Step 2: Capture two fixtures**
 
