@@ -202,6 +202,46 @@ def _replay_body(game_id: int, team_id: int, model_version_id: int) -> dict[str,
     }
 
 
+def _make_session_with_fixture() -> tuple[sessionmaker[Session], int, int, int]:
+    """Create an isolated in-memory DB with the LG fixture and a ModelVersion.
+
+    Returns (session_factory, game_id, team_id, model_version_id). Unlike the
+    module-level shared state, each call is a fresh engine, so tests can insert
+    box-score and postgame rows without leaking into other tests.
+    """
+    from sqlalchemy import select
+
+    from app.models.game import Game
+    from app.models.team import Team
+
+    engine = create_engine(
+        "sqlite:///:memory:",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    Base.metadata.create_all(engine)
+    factory: sessionmaker[Session] = sessionmaker(bind=engine)
+
+    with factory() as s:
+        mv = ModelVersion(name="test-model-status", version="v1", model_id="anthropic/claude-test")
+        s.add(mv)
+        s.commit()
+        mv_id = int(mv.id)
+
+    with factory() as s:
+        load_fixture_file(FIXTURE_PATH, s)
+
+    with factory() as s:
+        game = s.execute(select(Game)).scalars().first()
+        assert game is not None
+        g_id = int(game.id)
+        team = s.execute(select(Team).where(Team.code == "LG")).scalars().first()
+        assert team is not None
+        t_id = int(team.id)
+
+    return factory, g_id, t_id, mv_id
+
+
 # ---------------------------------------------------------------------------
 # /health — regression: existing endpoint must still work
 # ---------------------------------------------------------------------------
@@ -240,6 +280,44 @@ def test_team_home_recent_is_empty_list(client: TestClient) -> None:
     resp = client.get("/api/team/lg/home")
     assert resp.status_code == 200
     assert resp.json()["recent"] == []
+
+
+def test_team_home_box_status_reflects_snapshot() -> None:
+    """pipeline_status['box'] is 'missing' with no box score, 'ok' once one exists."""
+    from sqlalchemy import delete
+
+    from app.models.snapshot import BoxScoreSnapshot, IngestionRun
+    from app.services.pregame_views import build_team_home
+
+    factory, g_id, _t_id, _mv_id = _make_session_with_fixture()
+
+    # The fixture seeds a box score; remove it so we can test the 'missing' branch.
+    with factory() as s:
+        s.execute(delete(BoxScoreSnapshot).where(BoxScoreSnapshot.game_id == g_id))
+        s.commit()
+
+    with factory() as s:
+        before = build_team_home(s, "LG")
+        assert before.today is not None
+        assert before.today.pipeline_status["box"] == "missing"
+
+    with factory() as s:
+        ingestion = IngestionRun(source="test-box", status="completed")
+        s.add(ingestion)
+        s.commit()
+        box = BoxScoreSnapshot(
+            game_id=g_id,
+            ingestion_run_id=ingestion.id,
+            taken_at=datetime(2026, 4, 15, 13, 0, tzinfo=UTC),
+            content_hash="boxhash-1",
+        )
+        s.add(box)
+        s.commit()
+
+    with factory() as s:
+        after = build_team_home(s, "LG")
+        assert after.today is not None
+        assert after.today.pipeline_status["box"] == "ok"
 
 
 # ---------------------------------------------------------------------------

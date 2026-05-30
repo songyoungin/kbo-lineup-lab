@@ -14,7 +14,7 @@ from app.lineup_model.types import Handedness
 from app.models.evaluation import LineupEvaluationRun, LineupEvaluationSummary, RecommendedLineupRow
 from app.models.game import Game
 from app.models.player import Player
-from app.models.snapshot import ActualLineupSnapshotRow, PlayerStatSnapshotRow
+from app.models.snapshot import ActualLineupSnapshotRow, BoxScoreSnapshot, PlayerStatSnapshotRow
 from app.models.team import Team
 from app.schemas.pregame import (
     DifferenceTypeLiteral,
@@ -89,6 +89,16 @@ def _latest_completed_run(
     )
 
 
+def _box_score_exists(session: Session, game_id: int) -> bool:
+    """Return True when a box score snapshot has been ingested for the game."""
+    return (
+        session.execute(
+            select(BoxScoreSnapshot.id).where(BoxScoreSnapshot.game_id == game_id).limit(1)
+        ).first()
+        is not None
+    )
+
+
 def _player_name(session: Session, player_id: int) -> str:
     """Fetch the name of a player by primary key."""
     player = session.get(Player, player_id)
@@ -153,7 +163,7 @@ def build_team_home(session: Session, team_code: str) -> TeamHomeResponse:
             "schedule": "ok",
             "lineup": "ok",
             "eval": "ok" if completed_run is not None else "missing",
-            "box": "missing",
+            "box": "ok" if _box_score_exists(session, game.id) else "missing",
             "postgame": "missing",
         }
 
