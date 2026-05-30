@@ -6,11 +6,22 @@ from datetime import date
 
 import typer
 
+from app.jobs.bootstrap import run_bootstrap
 from app.jobs.daily_pipeline import run_daily_pipeline
 from app.jobs.postgame_pipeline import run_postgame_pipeline
 from app.jobs.pregame_pipeline import run_pregame_pipeline
 
 app = typer.Typer(help="LG Twins ingestion + evaluation pipeline runner.")
+
+
+@app.command("bootstrap")
+def bootstrap() -> None:
+    """Prepare a fresh database: apply migrations and seed teams + a model version."""
+    result = run_bootstrap()
+    typer.echo(
+        f"bootstrap: schema migrated; teams created={result.teams_created}; "
+        f"model_version_id={result.model_version_id}"
+    )
 
 
 @app.command("ingest-daily")

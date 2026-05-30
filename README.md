@@ -41,6 +41,38 @@ cd apps/api && uv run uvicorn app.main:app --reload
 cd apps/api && uv run pytest
 ```
 
+### Real data ingestion
+
+Bootstrap a database once (idempotent: applies migrations and seeds the 10 KBO
+teams + a default model version), then ingest per day. All commands read
+`KBO_DATABASE_URL`; use the same value everywhere.
+
+```bash
+cd apps/api
+export KBO_DATABASE_URL="sqlite:///./kbo_lineup_lab_real.db"
+
+# One-time setup (safe to re-run)
+uv run kbo-lab bootstrap
+
+# Daily: collect schedule + each LG game's lineup, stats, and box score (live Naver)
+uv run kbo-lab ingest-daily --date 2026-05-30
+
+# Per game (game id is the Naver game id, e.g. 20260530HTLG02026)
+uv run kbo-lab ingest-pregame  --game-id <game-id>   # lineup + pregame evaluation
+uv run kbo-lab ingest-postgame --game-id <game-id>   # box score + postgame review
+```
+
+For a one-shot local demo of a single date (bootstrap + ingest + evaluation +
+postgame review in one go), `scripts/seed_real.py` accepts the date as an
+argument:
+
+```bash
+KBO_DATABASE_URL="sqlite:///./kbo_lineup_lab_real.db" uv run python scripts/seed_real.py 2026-05-30
+```
+
+> Scheduling is external for now (e.g. a cron job invoking `kbo-lab ingest-daily`);
+> there is no built-in scheduler daemon yet.
+
 ### Frontend
 
 ```bash
