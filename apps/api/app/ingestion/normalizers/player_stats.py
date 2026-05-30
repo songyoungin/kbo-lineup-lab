@@ -38,6 +38,7 @@ from app.ingestion.types import PayloadCategory
 from app.models.game import Game
 from app.models.player import Player
 from app.models.snapshot import PlayerStatSnapshotRow, RawIngestionPayload, StatSnapshot
+from app.util.time import to_utc
 
 __all__ = ["PlayerStatsNormalizeResult", "normalize_player_stats"]
 
@@ -212,8 +213,10 @@ def normalize_player_stats(
     # audits stay stable (idempotency itself is guarded by content_hash).
     snapshot = StatSnapshot(
         ingestion_run_id=ingestion_run_id,
-        snapshot_at=datetime(
-            game.game_date.year, game.game_date.month, game.game_date.day, 12, 0, tzinfo=KST
+        snapshot_at=to_utc(
+            datetime(
+                game.game_date.year, game.game_date.month, game.game_date.day, 12, 0, tzinfo=KST
+            )
         ),
         content_hash=content_hash,
     )
