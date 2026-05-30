@@ -14,7 +14,8 @@ from app.lineup_model.types import Handedness
 from app.models.evaluation import LineupEvaluationRun, LineupEvaluationSummary, RecommendedLineupRow
 from app.models.game import Game
 from app.models.player import Player
-from app.models.snapshot import ActualLineupSnapshotRow, PlayerStatSnapshotRow
+from app.models.postgame import PostgameReviewRun
+from app.models.snapshot import ActualLineupSnapshotRow, BoxScoreSnapshot, PlayerStatSnapshotRow
 from app.models.team import Team
 from app.schemas.pregame import (
     DifferenceTypeLiteral,
@@ -89,6 +90,44 @@ def _latest_completed_run(
     )
 
 
+def _box_score_exists(session: Session, game_id: int) -> bool:
+    """Return True when a box score snapshot has been ingested for the game."""
+    return (
+        session.execute(
+            select(BoxScoreSnapshot.id).where(BoxScoreSnapshot.game_id == game_id).limit(1)
+        ).first()
+        is not None
+    )
+
+
+def _latest_completed_postgame_run(
+    session: Session, game_id: int, team_id: int
+) -> PostgameReviewRun | None:
+    """Return the most recent completed postgame review for a game+team pair.
+
+    PostgameReviewRun has no direct game/team columns, so this joins through
+    LineupEvaluationRun, matching the lookup in postgame_reviews.build_postgame_view.
+    """
+    return (
+        session.execute(
+            select(PostgameReviewRun)
+            .join(
+                LineupEvaluationRun,
+                PostgameReviewRun.evaluation_run_id == LineupEvaluationRun.id,
+            )
+            .where(
+                LineupEvaluationRun.game_id == game_id,
+                LineupEvaluationRun.team_id == team_id,
+                PostgameReviewRun.status == "completed",
+            )
+            .order_by(PostgameReviewRun.finished_at.desc())
+            .limit(1)
+        )
+        .scalars()
+        .first()
+    )
+
+
 def _player_name(session: Session, player_id: int) -> str:
     """Fetch the name of a player by primary key."""
     player = session.get(Player, player_id)
@@ -153,8 +192,12 @@ def build_team_home(session: Session, team_code: str) -> TeamHomeResponse:
             "schedule": "ok",
             "lineup": "ok",
             "eval": "ok" if completed_run is not None else "missing",
-            "box": "missing",
-            "postgame": "missing",
+            "box": "ok" if _box_score_exists(session, game.id) else "missing",
+            "postgame": (
+                "ok"
+                if _latest_completed_postgame_run(session, game.id, team_id) is not None
+                else "missing"
+            ),
         }
 
         today_card = TeamHomeGameCard(
