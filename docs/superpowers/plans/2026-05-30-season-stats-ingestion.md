@@ -55,44 +55,48 @@ The evaluator (`app/services/lineup_evaluator.py::build_hitter_stats`) reads the
 
 ---
 
-## Task 1: Discover & verify the per-player season-stat API endpoint (one-time; gate)
+## Task 1: Discover & verify the per-player season-stat API endpoint — ✅ DONE 2026-05-30
 
-**Discovery is one-time and manual; all runtime extraction is pure HTTP API.** The collector in Task 3 calls the endpoint with `httpx` — never a browser. Chrome DevTools is used here ONLY to read the exact request URL the Naver player SPA fires, because the URL is assembled at runtime from minified template literals and cannot be reliably reconstructed by grepping the JS bundle. (Confirmed: the bundle `…/player-end/260518-153852/static/js/main.cab9d926.js` references host `api-gw.sports.naver.com` and path fragments `/player/`, `/record/`, `playerId`, `categoryId`, `seasonCategory`, `/playerend-record`, `/vs-player-stats`, and the key `"OPS"` — but the segments are concatenated at runtime, so the full path must be read live once.) Produce a verification doc + 2 captured fixtures the later tasks depend on.
+**DONE.** Discovered **without a browser** (Chrome can't reach Naver under safety restrictions) by downloading the player-end JS bundle with curl and reading its URL-building code, then verified live. All runtime extraction is pure `httpx` API (Task 3) — no browser. Full write-up: [`docs/data-sources/player-season-stats-verification.md`](../../data-sources/player-season-stats-verification.md).
 
-**Files:**
-- Create: `docs/data-sources/player-season-stats-verification.md`
-- Create: `apps/api/tests/fixtures/sources/naver/player_season_62415.json` (박해민) and `player_season_69102.json` (문보경)
+**Verified endpoint:**
+```
+GET https://api-gw.sports.naver.com/players/{categoryId}/{playerId}/playerend-record
+```
+`categoryId="kbo"`, `playerId` = Naver player code (== KBO `playerCode`). Headers: `User-Agent` + `Referer: https://m.sports.naver.com/`. Confirmed `…/players/kbo/62415/playerend-record` → HTTP 200.
 
-- [ ] **Step 1: Read the exact season-stat request URL from DevTools (discovery only)**
+**Response (verified):** top `{code,success,result}`; `result.basicRecord` and `result.record` are **JSON-encoded strings** (parse with a second `json.loads`). **The authoritative table is `json.loads(result.record)["season"]`** — a list of per-year batting rows, each a flat dict with **OBP/SLG/OPS present as native numbers** (no derivation needed) plus `ab,hit,h2,h3,hr,bb,hp,sf,tb,hra,wrcPlus,woba,war,gyear,team,…`. Pick the row by `gyear` (e.g. `"2025"`). Example (62415, gyear 2025): `ab=442, obp=0.379, slg=0.346, ops=0.725`. (`basicRecord.basic` is a current-season-only string-typed summary without SLG — used as a last-resort fallback.)
 
-In Chrome, open `https://m.sports.naver.com/player/index?playerId=62415&category=kbo` (the player page is a React SPA, so the endpoint only appears at runtime). Open DevTools → Network → Fetch/XHR, reload, and find the request to `api-gw.sports.naver.com/...` whose JSON response contains season batting rows (keys like `ab`, `hit`, `hra`, `obp`, and a season id / year). Likely path shape based on the bundle: `…/record/…` with `playerId`/`categoryId` (category `kbo`). Copy its **exact URL** and request headers. This is the only manual step — from here on everything is API/CLI. Headers needed for the API call: `User-Agent` + `Referer: https://m.sports.naver.com/`.
+**Season selection (decided):** the normalizer (Task 4) picks the `record.season` row where `gyear == "2025"` (the verified game's year); for a current-season "today" pipeline, `gyear == str(target_date.year)`. Fallback order: exact year → `통산` (career) row → `basicRecord.basic`. Record the chosen `gyear` in each `stats_json` for auditing.
 
-- [ ] **Step 2: Capture two fixtures**
+**Files (created):**
+- `docs/data-sources/player-season-stats-verification.md`
+- `apps/api/tests/fixtures/sources/naver/player_season_62415.json` (박해민), `player_season_69102.json` (문보경) — verified distinct players, both with a 2025 row.
 
-With the URL from Step 1 (substituting player codes 62415 and 69102), save the raw JSON:
+- [x] **Step 1: Discover the endpoint (done — JS-bundle code analysis, no DevTools)**
+
+The Naver player page is a React SPA, so the URL is built at runtime. The bundle (`…player-end/<build>/static/js/main.<hash>.js`, linked from `m.sports.naver.com/player/index?...`) was fetched with curl and grepped: its code reads `get:function(e){var t=e.categoryId,n=e.playerId; axiosGet("https://api-gw.sports.naver.com"+"/players/"+t+"/"+n+"/playerend-record")}` → endpoint confirmed.
+
+- [x] **Step 2: Capture two fixtures (done)**
 
 ```bash
 cd apps/api && mkdir -p tests/fixtures/sources/naver
 UA='Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 Version/17.0 Mobile/15E148 Safari/604.1'
 curl -s --compressed -H "User-Agent: $UA" -H "Referer: https://m.sports.naver.com/" \
-  '<VERIFIED_URL_WITH_62415>' > tests/fixtures/sources/naver/player_season_62415.json
+  'https://api-gw.sports.naver.com/players/kbo/62415/playerend-record' \
+  > tests/fixtures/sources/naver/player_season_62415.json
 curl -s --compressed -H "User-Agent: $UA" -H "Referer: https://m.sports.naver.com/" \
-  '<VERIFIED_URL_WITH_69102>' > tests/fixtures/sources/naver/player_season_69102.json
+  'https://api-gw.sports.naver.com/players/kbo/69102/playerend-record' \
+  > tests/fixtures/sources/naver/player_season_69102.json
 ```
 
-Confirm each file is valid JSON and contains a 2025-season batting row.
+- [x] **Step 3: Document the verified shape (done)** — see the verification doc (exact field names, season-selection rule, mapper guidance).
 
-- [ ] **Step 3: Document the verified shape**
-
-Write `docs/data-sources/player-season-stats-verification.md` recording: the exact URL template (with `{player_code}` and any season/category params), required headers, the JSON path to the season batting row(s), and the **exact field names** for: at-bats, hits, doubles, triples, home runs, walks, hit-by-pitch, sacrifice flies, AVG, OBP, SLG, OPS (note which are present vs must be derived, and their JSON types — string vs number). If the source provides OBP/SLG/OPS directly, record those keys; if only counts, record the count keys needed to derive (SLG = total_bases/AB; OPS = OBP+SLG).
-
-**Fallback if no Naver player endpoint is found:** document the KBO Official hitter table (`https://www.koreabaseball.com/Record/Player/HitterBasic/Basic1.aspx`, ASP.NET WebForms, robots-disallowed → low-volume backup only) and record whether it exposes OBP/SLG/OPS columns. Note in the doc that this changes Task 2's `_extract_season_row` field names and Task 3's collector URL/HTTP method only.
-
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit (done in this session)**
 
 ```bash
-git add docs/data-sources/player-season-stats-verification.md tests/fixtures/sources/naver/player_season_62415.json tests/fixtures/sources/naver/player_season_69102.json
-git commit -m "docs(data): verify per-player season-stat endpoint and capture fixtures"
+git add docs/data-sources/player-season-stats-verification.md docs/superpowers/plans/2026-05-30-season-stats-ingestion.md tests/fixtures/sources/naver/player_season_62415.json tests/fixtures/sources/naver/player_season_69102.json
+git commit -m "docs(data): verify Naver per-player season-stat endpoint and capture fixtures"
 ```
 
 > **Downstream note for Tasks 2–4:** wherever this plan writes raw field names (`hra`, `obp`, `h2`, `h3`, `hr`, `bb`, `hp`, `sf`, `ab`, `hit`), replace them with the verified names from Step 3 if they differ. The mapper's *output* keys (`OPS`/`OBP`/`SLG`/`handedness`/`primary_position`) never change.
