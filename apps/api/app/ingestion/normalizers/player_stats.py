@@ -79,6 +79,8 @@ def _extract_season_row(body: dict[str, object], *, year: str) -> dict[str, obje
         record = json.loads(record_raw)
     except json.JSONDecodeError:
         return None
+    if not isinstance(record, dict):
+        return None
     rows = record.get("season")
     if not isinstance(rows, list):
         return None

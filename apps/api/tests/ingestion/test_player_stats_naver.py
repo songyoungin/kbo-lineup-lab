@@ -4,6 +4,7 @@ numeric OPS/OBP/SLG, and is idempotent."""
 
 from __future__ import annotations
 
+import json
 from collections.abc import Callable
 from datetime import UTC, date, datetime
 
@@ -128,6 +129,46 @@ def test_idempotent(session: Session, load_source: Callable[[str], str]) -> None
     )
     assert second.rows_created == 0
     assert session.query(StatSnapshot).count() == 1
+
+
+def _save_body(session: Session, run_id: int, code: str, raw_body: str) -> None:
+    """Save a hand-built per-player season payload (for malformed-record tests)."""
+    save_raw_payload(
+        session,
+        RawPayloadCreate(
+            ingestion_run_id=run_id,
+            category=PayloadCategory.PLAYER_STATS,
+            source_name="naver_sports",
+            source_url=f"https://api-gw.sports.naver.com/players/kbo/{code}/playerend-record",
+            fetched_at=datetime.now(UTC),
+            content_type="application/json",
+            raw_body=raw_body,
+        ),
+    )
+
+
+def test_skips_player_with_non_dict_record(
+    session: Session, load_source: Callable[[str], str]
+) -> None:
+    # result.record decodes to a JSON list (not a dict): the player must be
+    # skipped with a needs_review reason rather than crashing the whole run.
+    _seed(session)
+    run = IngestionRun(source="test:season", status="running")
+    session.add(run)
+    session.flush()
+    _save(session, run.id, "62415", load_source)
+    malformed = json.dumps(
+        {"code": 200, "success": True, "result": {"record": json.dumps([1, 2, 3])}}
+    )
+    _save_body(session, run.id, "69102", malformed)
+
+    result = normalize_player_stats(
+        session, game_external_id="20250514WOLG0", ingestion_run_id=run.id
+    )
+
+    assert result.rows_created == 1
+    assert result.rows_skipped == 1
+    assert result.needs_review_reasons
 
 
 def test_skips_player_not_in_db(session: Session, load_source: Callable[[str], str]) -> None:
