@@ -20,12 +20,21 @@ function verdictTone(verdict: Verdict | null): StatusTone {
   return verdictMap[verdict];
 }
 
-// Map pipeline status value → tone
+// Map pipeline status value → tone.
+// Canonical ingestion vocabulary: waiting | collected | normalized | complete | failed | needs_review.
+// Legacy/mock values (ok | missing | pending | error) are kept for backward compatibility.
 function pipelineTone(status: string): StatusTone {
-  if (status === "ok") return "good";
-  if (status === "missing" || status === "error") return "danger";
-  if (status === "pending") return "warning";
-  return "neutral";
+  if (status === "ok" || status === "complete" || status === "normalized")
+    return "good";
+  if (status === "missing" || status === "error" || status === "failed")
+    return "danger";
+  if (
+    status === "pending" ||
+    status === "collected" ||
+    status === "needs_review"
+  )
+    return "warning";
+  return "neutral"; // includes "waiting"
 }
 
 const RECENT_COLUMNS: Column<RecentGameSummary>[] = [
