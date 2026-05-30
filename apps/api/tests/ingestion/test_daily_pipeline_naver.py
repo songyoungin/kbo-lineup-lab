@@ -137,10 +137,11 @@ def test_daily_pipeline_naver_end_to_end(session: Session, session_factory: Sess
     assert len(session.execute(select(StatSnapshot)).scalars().all()) == 1
     assert session.execute(select(func.count()).select_from(BoxScoreSnapshot)).scalar() == 1
 
-    # One stat row per lineup batter (9); the starting pitcher 51111 has no
-    # batting order and is excluded.
+    # One stat row per available team hitter: 9 starters + 6 batterCandidate
+    # bench hitters = 15 (zero overlap in the 2025-05-14 fixture). The starting
+    # pitcher 51111 is position "P" and is excluded.
     assert result.stat_snapshots_created == 1
-    assert session.execute(select(func.count()).select_from(PlayerStatSnapshotRow)).scalar() == 9
+    assert session.execute(select(func.count()).select_from(PlayerStatSnapshotRow)).scalar() == 15
 
     # Box-score rows: the normalizer upserts box-only substitutes.  The fixture
     # has 16 LG batters in the box score; 9 also appear in the lineup upsert (the
@@ -177,5 +178,48 @@ def test_daily_pipeline_naver_is_idempotent(
     assert len(session.execute(select(StatSnapshot)).scalars().all()) == 1
     assert session.execute(select(func.count()).select_from(BoxScoreSnapshot)).scalar() == 1
     assert session.execute(select(func.count()).select_from(BoxScoreRow)).scalar() == 16
-    # No duplicate stat rows on the short-circuit second run.
-    assert session.execute(select(func.count()).select_from(PlayerStatSnapshotRow)).scalar() == 9
+    # No duplicate stat rows on the short-circuit second run (15 hitters).
+    assert session.execute(select(func.count()).select_from(PlayerStatSnapshotRow)).scalar() == 15
+
+
+def test_collect_roster_player_season_stats_covers_hitters_not_just_lineup(
+    session: Session,
+) -> None:
+    """The roster collector fetches every team hitter and excludes pitchers."""
+    from app.jobs.daily_pipeline import _collect_roster_player_season_stats
+    from app.models.player import Player
+    from app.models.snapshot import IngestionRun
+
+    lg = Team(code="LG", name="LG")
+    session.add(lg)
+    session.flush()
+    session.add_all(
+        [
+            Player(team_id=lg.id, external_id="100", name="hitter1", position="CF"),
+            Player(team_id=lg.id, external_id="101", name="hitter2", position="DH"),
+            Player(team_id=lg.id, external_id="900", name="pitcher1", position="P"),
+        ]
+    )
+    run = IngestionRun(source="test:roster-stats", status="running")
+    session.add(run)
+    session.flush()
+
+    seen: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        match = re.search(r"/players/kbo/([^/]+)/playerend-record", str(request.url))
+        assert match is not None
+        seen.append(match.group(1))
+        return httpx.Response(200, text="{}", headers={"content-type": "application/json"})
+
+    http = HttpClient(
+        client=httpx.Client(transport=httpx.MockTransport(handler)),
+        retry_backoff=(0.0,),
+    )
+
+    count = _collect_roster_player_season_stats(
+        session, ingestion_run=run, team_id=lg.id, http=http
+    )
+
+    assert count == 2
+    assert set(seen) == {"100", "101"}  # pitcher 900 excluded

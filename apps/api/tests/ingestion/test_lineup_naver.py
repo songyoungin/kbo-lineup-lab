@@ -241,6 +241,48 @@ def test_normalize_lineup_creates_snapshot_with_nine_rows(
     assert park_row.position == "CF"
 
 
+def test_normalize_lineup_upserts_bench_hitters_without_rows(
+    session: Session,
+    load_source: Callable[[str], str],
+) -> None:
+    """batterCandidate bench hitters become Player rows but produce no lineup rows.
+
+    Verifies the bench hitter 박동원 (code 79365) is upserted with the position
+    derived from its numeric ``pos`` ("2" -> C) and handedness from hitType
+    ("우투우타" -> bats R, throws R), and that it has no ActualLineupSnapshotRow.
+    """
+    lg, wo = _seed_teams(session)
+    _seed_game(session, lg, wo)
+    run = IngestionRun(source="test:lineup", status="running")
+    session.add(run)
+    session.flush()
+    payload = _save_preview_payload(session, run, load_source)
+
+    result = normalize_lineup(session, payload)
+
+    bak = session.execute(select(Player).where(Player.external_id == "79365")).scalar_one()
+    assert bak.name == "박동원"
+    assert bak.position == "C"  # pos="2" -> C (NOT the Korean "포수")
+    assert bak.bats == "R"
+    assert bak.throws == "R"
+
+    # Bench hitter has NO lineup snapshot row (no batting order).
+    bench_rows = (
+        session.execute(
+            select(ActualLineupSnapshotRow).where(
+                ActualLineupSnapshotRow.snapshot_id == result.snapshot_id,
+                ActualLineupSnapshotRow.player_id == bak.id,
+            )
+        )
+        .scalars()
+        .all()
+    )
+    assert bench_rows == []
+
+    # The snapshot still contains exactly the nine starters.
+    assert result.rows_created == 9
+
+
 def test_normalize_lineup_is_idempotent(
     session: Session,
     load_source: Callable[[str], str],

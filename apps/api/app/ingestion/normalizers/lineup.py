@@ -254,6 +254,29 @@ def normalize_lineup(
         )
         rows_created += 1
 
+    # Bench hitters (batterCandidate) are upserted as Player rows so the
+    # recommender's candidate pool extends beyond the starting nine. They carry
+    # no batting order, so no ActualLineupSnapshotRow is created. The numeric
+    # position lives in ``pos`` here (``position`` is the Korean position word,
+    # which to_position does not recognize), so it is mapped onto the
+    # ``position`` key _upsert_player expects.
+    for candidate in lineup_block.get("batterCandidate") or []:
+        if not candidate.get("playerCode"):
+            rows_skipped += 1
+            needs_review_reasons.append(f"batterCandidate missing playerCode: {candidate!r}")
+            continue
+        _upsert_player(
+            session,
+            team.id,
+            {
+                "playerCode": candidate.get("playerCode"),
+                "playerName": candidate.get("playerName"),
+                "position": candidate.get("pos"),
+                "hitType": candidate.get("hitType"),
+                "batsThrows": candidate.get("batsThrows"),
+            },
+        )
+
     session.flush()
     return LineupNormalizeResult(
         snapshot_id=snapshot_id,
