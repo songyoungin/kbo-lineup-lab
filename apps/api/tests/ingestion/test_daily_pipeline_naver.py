@@ -12,6 +12,8 @@ Validates:
 
 from __future__ import annotations
 
+import json
+import re
 from collections.abc import Callable
 from contextlib import AbstractContextManager
 from datetime import date
@@ -25,13 +27,41 @@ from sqlalchemy.orm import Session
 from app.ingestion.http_client import HttpClient
 from app.jobs.daily_pipeline import run_daily_pipeline
 from app.models.game import Game
-from app.models.snapshot import ActualLineupSnapshot, BoxScoreRow, BoxScoreSnapshot, StatSnapshot
+from app.models.snapshot import (
+    ActualLineupSnapshot,
+    BoxScoreRow,
+    BoxScoreSnapshot,
+    PlayerStatSnapshotRow,
+    StatSnapshot,
+)
 from app.models.team import Team
 
 FIXTURE_DIR = Path(__file__).resolve().parent.parent / "fixtures" / "sources" / "naver"
 SCHEDULE_JSON = (FIXTURE_DIR / "schedule_20250514.json").read_text(encoding="utf-8")
 PREVIEW_JSON = (FIXTURE_DIR / "preview_20250514WOLG02025.json").read_text(encoding="utf-8")
 RECORD_JSON = (FIXTURE_DIR / "record_20250514WOLG02025.json").read_text(encoding="utf-8")
+
+# Captured per-player season record used as a template: the handler clones it and
+# substitutes the requested player code so every lineup batter resolves to a row
+# (only 62415 and 69102 have real captures, but the test asserts row counts and
+# numeric types, not per-player values).
+_PLAYER_TEMPLATE = json.loads(
+    (FIXTURE_DIR / "player_season_62415.json").read_text(encoding="utf-8")
+)
+
+
+def _player_season_body(code: str) -> str:
+    """Return a synthetic but valid per-player season payload for ``code``."""
+    body = json.loads(json.dumps(_PLAYER_TEMPLATE))  # deep copy
+    body["result"]["playerId"] = code
+    # record is a JSON-encoded string; rewrite each season row's pcode to code.
+    record = json.loads(body["result"]["record"])
+    for row in record.get("season", []):
+        if isinstance(row, dict):
+            row["pcode"] = code
+    body["result"]["record"] = json.dumps(record, ensure_ascii=False)
+    return json.dumps(body, ensure_ascii=False)
+
 
 SessionFactory = Callable[[], AbstractContextManager[Session]]
 
@@ -66,6 +96,13 @@ def _make_naver_mock_http() -> HttpClient:
         elif u.endswith("/record"):
             body = RECORD_JSON
         else:
+            match = re.search(r"/players/kbo/([^/]+)/playerend-record", u)
+            if match is not None:
+                return httpx.Response(
+                    200,
+                    text=_player_season_body(match.group(1)),
+                    headers={"content-type": "application/json"},
+                )
             return httpx.Response(404, text="nf")
         return httpx.Response(200, text=body, headers={"content-type": "application/json"})
 
@@ -99,6 +136,11 @@ def test_daily_pipeline_naver_end_to_end(session: Session, session_factory: Sess
     assert session.execute(select(func.count()).select_from(ActualLineupSnapshot)).scalar() == 1
     assert len(session.execute(select(StatSnapshot)).scalars().all()) == 1
     assert session.execute(select(func.count()).select_from(BoxScoreSnapshot)).scalar() == 1
+
+    # One stat row per lineup batter (9); the starting pitcher 51111 has no
+    # batting order and is excluded.
+    assert result.stat_snapshots_created == 1
+    assert session.execute(select(func.count()).select_from(PlayerStatSnapshotRow)).scalar() == 9
 
     # Box-score rows: the normalizer upserts box-only substitutes.  The fixture
     # has 16 LG batters in the box score; 9 also appear in the lineup upsert (the
@@ -135,3 +177,5 @@ def test_daily_pipeline_naver_is_idempotent(
     assert len(session.execute(select(StatSnapshot)).scalars().all()) == 1
     assert session.execute(select(func.count()).select_from(BoxScoreSnapshot)).scalar() == 1
     assert session.execute(select(func.count()).select_from(BoxScoreRow)).scalar() == 16
+    # No duplicate stat rows on the short-circuit second run.
+    assert session.execute(select(func.count()).select_from(PlayerStatSnapshotRow)).scalar() == 9

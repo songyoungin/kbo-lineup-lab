@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from collections.abc import Callable, Iterator
 from contextlib import AbstractContextManager
 from datetime import UTC, date, datetime
@@ -300,6 +301,23 @@ _NAVER_PREVIEW_JSON = (_NAVER_FIXTURE_DIR / "preview_20250514WOLG02025.json").re
 _NAVER_RECORD_JSON = (_NAVER_FIXTURE_DIR / "record_20250514WOLG02025.json").read_text(
     encoding="utf-8"
 )
+# Per-player season record template; the handler clones it and rewrites the
+# requested player code so every lineup batter resolves to a season row.
+_NAVER_PLAYER_TEMPLATE = json.loads(
+    (_NAVER_FIXTURE_DIR / "player_season_62415.json").read_text(encoding="utf-8")
+)
+
+
+def _naver_player_season_body(code: str) -> str:
+    """Return a synthetic but valid per-player season payload for ``code``."""
+    body = json.loads(json.dumps(_NAVER_PLAYER_TEMPLATE))  # deep copy
+    body["result"]["playerId"] = code
+    record = json.loads(body["result"]["record"])
+    for row in record.get("season", []):
+        if isinstance(row, dict):
+            row["pcode"] = code
+    body["result"]["record"] = json.dumps(record, ensure_ascii=False)
+    return json.dumps(body, ensure_ascii=False)
 
 
 def _make_naver_daily_mock_http() -> HttpClient:
@@ -314,6 +332,13 @@ def _make_naver_daily_mock_http() -> HttpClient:
         elif u.endswith("/record"):
             body = _NAVER_RECORD_JSON
         else:
+            match = re.search(r"/players/kbo/([^/]+)/playerend-record", u)
+            if match is not None:
+                return httpx.Response(
+                    200,
+                    text=_naver_player_season_body(match.group(1)),
+                    headers={"content-type": "application/json"},
+                )
             return httpx.Response(404, text="nf")
         return httpx.Response(200, text=body, headers={"content-type": "application/json"})
 
