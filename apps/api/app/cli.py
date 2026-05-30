@@ -8,6 +8,7 @@ import typer
 
 from app.jobs.bootstrap import run_bootstrap
 from app.jobs.daily_pipeline import run_daily_pipeline
+from app.jobs.full_pipeline import run_full_pipeline
 from app.jobs.postgame_pipeline import run_postgame_pipeline
 from app.jobs.pregame_pipeline import run_pregame_pipeline
 
@@ -22,6 +23,20 @@ def bootstrap() -> None:
         f"bootstrap: schema migrated; teams created={result.teams_created}; "
         f"model_version_id={result.model_version_id}"
     )
+
+
+@app.command("run")
+def run(
+    date_arg: str = typer.Option(
+        ..., "--date", help="ISO date (YYYY-MM-DD) to ingest and analyse."
+    ),
+) -> None:
+    """Bootstrap, ingest live data, and run pregame eval + postgame review for the date."""
+    target = date.fromisoformat(date_arg)
+    result = run_full_pipeline(target)
+    typer.echo(result.summary())
+    if not result.succeeded:
+        raise typer.Exit(code=1)
 
 
 @app.command("ingest-daily")
