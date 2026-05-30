@@ -54,6 +54,21 @@ def test_full_pipeline_result_not_succeeded_when_no_game() -> None:
     assert result.succeeded is False
 
 
+def test_full_pipeline_result_not_succeeded_when_error_set() -> None:
+    """succeeded is False (and summary shows the error) when the analysis phase failed."""
+    result = FullPipelineResult(
+        target_date=date(2026, 5, 30),
+        daily_status="completed",
+        teams_created=0,
+        game_id=1,
+        evaluation_run_id=None,
+        postgame_review_run_id=None,
+        error="404: No lineup snapshot at-or-before cutoff",
+    )
+    assert result.succeeded is False
+    assert "error=404" in result.summary()
+
+
 def test_run_cli_command_success(monkeypatch: pytest.MonkeyPatch) -> None:
     """`kbo-lab run --date` echoes the summary and exits 0 on success."""
     from typer.testing import CliRunner
