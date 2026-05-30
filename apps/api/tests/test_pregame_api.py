@@ -283,7 +283,7 @@ def test_team_home_recent_is_empty_list(client: TestClient) -> None:
 
 
 def test_team_home_lineup_status_reflects_snapshot() -> None:
-    """pipeline_status['lineup'] is 'missing' with no lineup, 'ok' once one exists."""
+    """pipeline_status['lineup'] is 'waiting' with no lineup, 'normalized' once one exists."""
     from sqlalchemy import delete
 
     from app.models.snapshot import ActualLineupSnapshot, IngestionRun
@@ -291,7 +291,7 @@ def test_team_home_lineup_status_reflects_snapshot() -> None:
 
     factory, g_id, t_id, _mv_id = _make_session_with_fixture()
 
-    # The fixture seeds a lineup snapshot; remove it so we can test the 'missing' branch.
+    # The fixture seeds a lineup snapshot; remove it so we can test the 'waiting' branch.
     with factory() as s:
         s.execute(
             delete(ActualLineupSnapshot).where(
@@ -304,7 +304,7 @@ def test_team_home_lineup_status_reflects_snapshot() -> None:
     with factory() as s:
         before = build_team_home(s, "LG")
         assert before.today is not None
-        assert before.today.pipeline_status["lineup"] == "missing"
+        assert before.today.pipeline_status["lineup"] == "waiting"
 
     with factory() as s:
         ingestion = IngestionRun(source="test-lineup", status="completed")
@@ -323,11 +323,11 @@ def test_team_home_lineup_status_reflects_snapshot() -> None:
     with factory() as s:
         after = build_team_home(s, "LG")
         assert after.today is not None
-        assert after.today.pipeline_status["lineup"] == "ok"
+        assert after.today.pipeline_status["lineup"] == "normalized"
 
 
 def test_team_home_postgame_status_reflects_review_run() -> None:
-    """pipeline_status['postgame'] flips to 'ok' once a completed review exists."""
+    """pipeline_status['postgame'] flips to 'complete' once a completed review exists."""
     from sqlalchemy import select
 
     from app.models.evaluation import LineupEvaluationRun
@@ -345,7 +345,7 @@ def test_team_home_postgame_status_reflects_review_run() -> None:
     with factory() as s:
         before = build_team_home(s, "LG")
         assert before.today is not None
-        assert before.today.pipeline_status["postgame"] == "missing"
+        assert before.today.pipeline_status["postgame"] == "waiting"
 
     with factory() as s:
         ingestion = IngestionRun(source="test-box", status="completed")
@@ -389,11 +389,11 @@ def test_team_home_postgame_status_reflects_review_run() -> None:
     with factory() as s:
         after = build_team_home(s, "LG")
         assert after.today is not None
-        assert after.today.pipeline_status["postgame"] == "ok"
+        assert after.today.pipeline_status["postgame"] == "complete"
 
 
 def test_team_home_box_status_reflects_snapshot() -> None:
-    """pipeline_status['box'] is 'missing' with no box score, 'ok' once one exists."""
+    """pipeline_status['box'] is 'waiting' with no box score, 'normalized' once one exists."""
     from sqlalchemy import delete
 
     from app.models.snapshot import BoxScoreSnapshot, IngestionRun
@@ -409,7 +409,7 @@ def test_team_home_box_status_reflects_snapshot() -> None:
     with factory() as s:
         before = build_team_home(s, "LG")
         assert before.today is not None
-        assert before.today.pipeline_status["box"] == "missing"
+        assert before.today.pipeline_status["box"] == "waiting"
 
     with factory() as s:
         ingestion = IngestionRun(source="test-box", status="completed")
@@ -427,7 +427,36 @@ def test_team_home_box_status_reflects_snapshot() -> None:
     with factory() as s:
         after = build_team_home(s, "LG")
         assert after.today is not None
-        assert after.today.pipeline_status["box"] == "ok"
+        assert after.today.pipeline_status["box"] == "normalized"
+
+
+def test_team_home_pipeline_status_surfaces_failed_run() -> None:
+    """A failed pregame ingestion run surfaces as 'failed' in team-home (canonical passthrough)."""
+    from app.models.game import Game
+    from app.models.snapshot import IngestionRun
+    from app.services.pregame_views import build_team_home
+
+    factory, g_id, _t_id, _mv_id = _make_session_with_fixture()
+
+    with factory() as s:
+        game = s.get(Game, g_id)
+        assert game is not None
+        ext_id = game.external_id
+        # The lineup category keys off the pregame ingestion run; a failed run
+        # must surface as 'failed' regardless of any seeded snapshot.
+        s.add(
+            IngestionRun(
+                source=f"pipeline:ingest-pregame:{ext_id}",
+                status="failed",
+                error_message="boom",
+            )
+        )
+        s.commit()
+
+    with factory() as s:
+        home = build_team_home(s, "LG")
+        assert home.today is not None
+        assert home.today.pipeline_status["lineup"] == "failed"
 
 
 # ---------------------------------------------------------------------------

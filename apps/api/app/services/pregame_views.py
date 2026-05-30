@@ -38,6 +38,7 @@ from app.schemas.pregame import (
     derive_verdict,
 )
 from app.services.evaluation_runs import get_or_create_evaluation_run
+from app.services.ingestion_status import build_game_ingestion_status
 from app.services.lineup_evaluator import compute_actual_lineup_score, evaluate_lineup_for_run
 from app.services.snapshot_selector import (
     SnapshotNotFoundError,
@@ -148,6 +149,19 @@ def _latest_completed_postgame_run(
     )
 
 
+def _overlay_presence(canonical_status: str, present: bool, success_status: str) -> str:
+    """Upgrade a 'waiting' canonical status to a success status when data is present.
+
+    The canonical ingestion status is pipeline-run-centric, so directly-seeded data
+    (no pipeline run) reads as 'waiting'. For the team-home product view we surface the
+    terminal success status when the underlying artifact actually exists. Non-'waiting'
+    statuses (collected, normalized, complete, failed, needs_review) pass through unchanged.
+    """
+    if canonical_status == "waiting" and present:
+        return success_status
+    return canonical_status
+
+
 def _player_name(session: Session, player_id: int) -> str:
     """Fetch the name of a player by primary key."""
     player = session.get(Player, player_id)
@@ -173,9 +187,9 @@ def build_team_home(session: Session, team_code: str) -> TeamHomeResponse:
     For MVP with fixture data:
     - "today" is the single game present in the fixture.
     - "recent" is an empty list (no historical game records yet).
-    - Pipeline status for each stage is derived from the presence of the
-      corresponding ingested data or run (schedule/lineup snapshots, evaluation
-      run, box score, postgame review).
+    - Pipeline status reuses the canonical per-category vocabulary from
+      build_game_ingestion_status, overlaid with artifact presence so directly-seeded
+      data (no pipeline run) reads as complete/normalized rather than waiting.
 
     Args:
         session: SQLAlchemy session.
@@ -208,19 +222,39 @@ def build_team_home(session: Session, team_code: str) -> TeamHomeResponse:
         opp_team = session.get(Team, opp_team_id)
         opp_code = opp_team.code if opp_team is not None else "???"
 
-        # Derive pipeline status from existence of evaluation run
         completed_run = _latest_completed_run(session, game.id, team_id)
+
+        # The overlay re-checks artifact presence on purpose: the canonical builders
+        # return "waiting" (short-circuit) when no pipeline run exists, without inspecting
+        # the snapshot/run, so presence cannot be inferred from `canonical` alone.
+        canonical = {
+            c.category: c.status for c in build_game_ingestion_status(session, game.id).categories
+        }
+
         pipeline_status: dict[str, str] = {
-            # schedule is guaranteed: this block only runs inside `if game is not None`,
-            # so the Game (schedule) row provably exists.
-            "schedule": "ok",
-            "lineup": "ok" if _lineup_snapshot_exists(session, game.id, team_id) else "missing",
-            "eval": "ok" if completed_run is not None else "missing",
-            "box": "ok" if _box_score_exists(session, game.id) else "missing",
-            "postgame": (
-                "ok"
-                if _latest_completed_postgame_run(session, game.id, team_id) is not None
-                else "missing"
+            # schedule's artifact is the Game row itself, which provably exists in this
+            # block; treat it as complete (a failed daily ingestion run is still surfaced
+            # operationally by the admin ingestion-status page, not here).
+            "schedule": "complete",
+            "lineup": _overlay_presence(
+                canonical.get("lineup", "waiting"),
+                _lineup_snapshot_exists(session, game.id, team_id),
+                "normalized",
+            ),
+            "eval": _overlay_presence(
+                canonical.get("evaluation", "waiting"),
+                completed_run is not None,
+                "complete",
+            ),
+            "box": _overlay_presence(
+                canonical.get("box_score", "waiting"),
+                _box_score_exists(session, game.id),
+                "normalized",
+            ),
+            "postgame": _overlay_presence(
+                canonical.get("postgame_review", "waiting"),
+                _latest_completed_postgame_run(session, game.id, team_id) is not None,
+                "complete",
             ),
         }
 
