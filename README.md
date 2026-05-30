@@ -62,12 +62,11 @@ uv run kbo-lab ingest-pregame  --game-id <game-id>   # lineup + pregame evaluati
 uv run kbo-lab ingest-postgame --game-id <game-id>   # box score + postgame review
 ```
 
-For a one-shot local demo of a single date (bootstrap + ingest + evaluation +
-postgame review in one go), `scripts/seed_real.py` accepts the date as an
-argument:
+For a one-shot run of a single date (bootstrap + ingest + evaluation + postgame
+review in one command), use `kbo-lab run`:
 
 ```bash
-KBO_DATABASE_URL="sqlite:///./kbo_lineup_lab_real.db" uv run python scripts/seed_real.py 2026-05-30
+KBO_DATABASE_URL="sqlite:///./kbo_lineup_lab_real.db" uv run kbo-lab run --date 2026-05-30
 ```
 
 > Scheduling is external for now (e.g. a cron job invoking `kbo-lab ingest-daily`);
