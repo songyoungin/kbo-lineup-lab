@@ -1,79 +1,59 @@
 """Ingest REAL LG Twins data for one date and run evaluation + postgame jobs.
 
 Local helper (not a production entrypoint). Unlike ``seed_demo.py`` (which loads
-the deterministic fixture), this seeds the KBO teams + a ModelVersion, then runs
-the real Naver ingestion pipeline live for ``TARGET_DATE`` and produces the
-evaluation + postgame review runs so the API/web render against real data.
+the deterministic fixture), this bootstraps the DB, then runs the real Naver
+ingestion pipeline live for the target date and produces the evaluation + postgame
+review runs so the API/web render against real data.
 
 Run from ``apps/api`` with the same KBO_DATABASE_URL the server uses::
 
-    KBO_DATABASE_URL="sqlite:///./kbo_lineup_lab_real.db" uv run python scripts/seed_real.py
+    KBO_DATABASE_URL="sqlite:///./kbo_lineup_lab_real.db" \
+        uv run python scripts/seed_real.py 2026-05-30
 
 Requires live network access to api-gw.sports.naver.com.
 """
 
 from __future__ import annotations
 
+import os
+import sys
 from datetime import UTC, date
 
 from sqlalchemy import select
-from sqlalchemy.orm import Session
 
 from app.db.session import SessionLocal
-from app.ingestion.game_id import TEAM_CODES
+from app.jobs.bootstrap import run_bootstrap
 from app.jobs.daily_pipeline import run_daily_pipeline
-from app.models.evaluation import ModelVersion
 from app.models.snapshot import ActualLineupSnapshot, BoxScoreSnapshot
-from app.models.team import Team
 from app.schemas.postgame import GeneratePostgameReviewRequest
 from app.schemas.pregame import ReplayEvaluationRequest
 from app.services.postgame_reviews import generate_postgame_review_for_request
 from app.services.pregame_views import replay_evaluation
 
-TARGET_DATE = date(2025, 5, 14)  # verified game: Kiwoom (WO) @ LG, final
+_DEFAULT_TARGET_DATE = date(2025, 5, 14)  # verified game: Kiwoom (WO) @ LG, final
 
 
-def _seed_teams(session: Session) -> int:
-    """Insert the 10 KBO teams (idempotent). Returns the number created."""
-    created = 0
-    for code, name in TEAM_CODES.items():
-        existing = session.scalars(select(Team).where(Team.code == code)).first()
-        if existing is None:
-            session.add(Team(code=code, name=name))
-            created += 1
-    session.flush()
-    return created
-
-
-def _ensure_model_version(session: Session) -> int:
-    """Return an existing ModelVersion id, creating a default one if none exist."""
-    existing = session.scalars(select(ModelVersion)).first()
-    if existing is not None:
-        return int(existing.id)
-    model_version = ModelVersion(
-        name="heuristic-v1",
-        version="v1",
-        model_id="internal/lineup-score-v1",
-    )
-    session.add(model_version)
-    session.flush()
-    return int(model_version.id)
+def _resolve_target_date() -> date:
+    """Date to ingest: first CLI arg, else SEED_REAL_DATE env, else the default."""
+    if len(sys.argv) > 1:
+        return date.fromisoformat(sys.argv[1])
+    env_value = os.environ.get("SEED_REAL_DATE")
+    if env_value:
+        return date.fromisoformat(env_value)
+    return _DEFAULT_TARGET_DATE
 
 
 def main() -> None:
-    """Seed teams, ingest real data live, then run eval + postgame review."""
-    # 1. Teams + ModelVersion (own transaction).
-    session = SessionLocal()
-    try:
-        created = _seed_teams(session)
-        model_version_id = _ensure_model_version(session)
-        session.commit()
-        print(f"teams: created={created}; model_version_id={model_version_id}")
-    finally:
-        session.close()
+    """Bootstrap, ingest real data live for the target date, then eval + postgame."""
+    target_date = _resolve_target_date()
+
+    # 1. Schema + reference data (idempotent).
+    boot = run_bootstrap()
+    model_version_id = boot.model_version_id
+    print(f"bootstrap: teams created={boot.teams_created}; model_version_id={model_version_id}")
 
     # 2. Real ingestion pipeline (opens its own session; live Naver fetch).
-    result = run_daily_pipeline(target_date=TARGET_DATE)
+    result = run_daily_pipeline(target_date=target_date)
     print("pipeline:", result.summary())
     if result.status != "completed":
         print(f"pipeline did not complete: {result.error_message}")
@@ -82,7 +62,6 @@ def main() -> None:
     # 3. Evaluation + postgame review on the ingested snapshots.
     session = SessionLocal()
     try:
-        model_version_id = _ensure_model_version(session)
         lineup = session.scalars(select(ActualLineupSnapshot)).first()
         box_score = session.scalars(select(BoxScoreSnapshot)).first()
         if lineup is None:

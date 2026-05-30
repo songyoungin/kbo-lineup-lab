@@ -59,3 +59,17 @@ def test_run_bootstrap_creates_schema_and_seeds(
     second = run_bootstrap()
     assert second.teams_created == 0
     assert second.model_version_id == first.model_version_id
+
+
+def test_bootstrap_cli_command(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """`kbo-lab bootstrap` exits 0 and reports the seeded teams against a fresh DB."""
+    from typer.testing import CliRunner
+
+    from app.cli import app as cli_app
+
+    monkeypatch.setenv("KBO_DATABASE_URL", f"sqlite:///{tmp_path / 'cli.db'}")
+    result = CliRunner().invoke(cli_app, ["bootstrap"])
+
+    assert result.exit_code == 0, result.output
+    assert f"teams created={len(TEAM_CODES)}" in result.output
+    assert "model_version_id=" in result.output
