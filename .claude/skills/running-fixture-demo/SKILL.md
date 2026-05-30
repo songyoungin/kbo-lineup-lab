@@ -75,10 +75,3 @@ Web pages to open: `/`, `/games/1/pregame`, `/games/1/postgame`,
   hand-picked time.
 - **Web shows nothing / fetch errors** — API not on `:8000`, or started with a
   different `KBO_DATABASE_URL` than the one you seeded. Use one URL everywhere.
-
-## Known Gap
-
-`team/lg/home` `pipeline_status` shows `box`/`postgame` as `missing` even after
-a postgame run exists and `/games/1/postgame` returns data. The status
-computation looks inconsistent with the run state — worth checking when real
-ingestion lands. This is a fixture/demo helper, not a production ingestion path.
