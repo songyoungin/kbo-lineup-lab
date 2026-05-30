@@ -12,6 +12,7 @@ from typing import Final
 from sqlalchemy.orm import Session
 
 from app.ingestion.collectors.lineup import NAVER_REFERER
+from app.ingestion.collectors.lineup import SOURCE_NAME as NAVER_SOURCE_NAME
 from app.ingestion.http_client import HttpClient
 from app.ingestion.raw_store import save_raw_payload
 from app.ingestion.types import PayloadCategory
@@ -21,7 +22,6 @@ from app.schemas.ingestion import RawPayloadCreate
 __all__ = ["build_player_season_url", "collect_player_season_stats"]
 
 PLAYER_SEASON_URL: Final = "https://api-gw.sports.naver.com/players/kbo/{code}/playerend-record"
-NAVER_SOURCE_NAME: Final = "naver_sports"
 
 
 def build_player_season_url(*, player_code: str) -> str:

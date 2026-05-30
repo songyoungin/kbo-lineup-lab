@@ -30,7 +30,7 @@ def test_collect_stores_payload(
     body = load_source("naver/player_season_62415.json")
 
     def handler(request: httpx.Request) -> httpx.Response:
-        assert "Referer" in request.headers
+        assert request.headers.get("Referer") == "https://m.sports.naver.com/"
         return httpx.Response(200, text=body, headers={"content-type": "application/json"})
 
     run = IngestionRun(source="test:season", status="running")

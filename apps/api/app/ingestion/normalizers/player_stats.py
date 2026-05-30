@@ -26,13 +26,13 @@ from __future__ import annotations
 import json
 import re
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import datetime
 from typing import Final
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.ingestion.normalizers._shared import compute_content_hash
+from app.ingestion.normalizers._shared import KST, compute_content_hash
 from app.ingestion.season_stats_map import map_season_stats
 from app.ingestion.types import PayloadCategory
 from app.models.game import Game
@@ -206,9 +206,13 @@ def normalize_player_stats(
             needs_review_reasons=tuple(needs_review_reasons),
         )
 
+    # Deterministic noon-KST sentinel derived from the game date so re-runs and
+    # audits stay stable (idempotency itself is guarded by content_hash).
     snapshot = StatSnapshot(
         ingestion_run_id=ingestion_run_id,
-        snapshot_at=datetime.now(UTC),
+        snapshot_at=datetime(
+            game.game_date.year, game.game_date.month, game.game_date.day, 12, 0, tzinfo=KST
+        ),
         content_hash=content_hash,
     )
     session.add(snapshot)
