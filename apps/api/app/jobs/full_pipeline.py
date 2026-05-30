@@ -1,9 +1,8 @@
 """One-shot real-data pipeline: bootstrap + ingest + evaluate + postgame review.
 
 `run_full_pipeline` chains the whole flow for a single date's LG game and returns
-a structured result. It is the implementation behind the `kbo-lab run` command and
-the `scripts/seed_real.py` demo helper. Live network access (api-gw.sports.naver.com)
-is required for the daily ingestion step.
+a structured result. It is the implementation behind the `kbo-lab run` command.
+Live network access (api-gw.sports.naver.com) is required for the daily ingestion step.
 """
 
 from __future__ import annotations
