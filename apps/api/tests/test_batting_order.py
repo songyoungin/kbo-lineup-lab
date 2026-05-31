@@ -160,6 +160,11 @@ def test_openai_provider_parses_json_content(mock_openai_cls: MagicMock) -> None
     out = provider.complete(system="sys", user="usr", schema={"name": "x"})
     assert out == {"lineup_summary_ko": "ok", "batting_order": []}
     mock_client.chat.completions.create.assert_called_once()
+    kwargs = mock_client.chat.completions.create.call_args.kwargs
+    assert kwargs["model"] == "gpt-4.1"
+    assert kwargs["temperature"] == 0
+    assert kwargs["seed"] == 0
+    assert kwargs["response_format"] == {"type": "json_schema", "json_schema": {"name": "x"}}
 
 
 def _full_assigned() -> dict[Position, HitterStats]:

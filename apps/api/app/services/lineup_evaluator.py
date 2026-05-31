@@ -418,10 +418,10 @@ def evaluate_lineup_for_run(
     run.status = "completed"
     run.output_hash = _lineup_output_hash(recommended)
     run.finished_at = datetime.now(UTC)
-    run.model_config_json = {
-        "batting_order_source": order_result.source,
-        "llm_model": os.environ.get("LINEUP_LLM_MODEL", "gpt-4.1"),
-    }
+    model_config: dict[str, object] = {"batting_order_source": order_result.source}
+    if order_result.source == "llm":
+        model_config["llm_model"] = os.environ.get("LINEUP_LLM_MODEL", "gpt-4.1")
+    run.model_config_json = model_config
 
     session.flush()
     return run
