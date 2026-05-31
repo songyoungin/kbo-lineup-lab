@@ -608,7 +608,10 @@ def build_lineup_comparison(
                 recommended_player_name=name_map.get(r.player_id, f"Player({r.player_id})"),
                 recommended_position=r.position,
                 difference_type=diff_type,
-                main_reason=reason,
+                # Prefer the model's per-player rationale for why this player is
+                # recommended at this slot; fall back to the mechanical diff
+                # description when no rationale was persisted.
+                main_reason=r.rationale or reason,
             )
         )
 

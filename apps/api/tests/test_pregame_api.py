@@ -601,6 +601,22 @@ def test_lineup_comparison_difference_types_are_valid(
         assert row["difference_type"] in valid_types
 
 
+def test_lineup_comparison_main_reason_uses_recommended_rationale(
+    client: TestClient, _game_id: int, _team_id: int, _model_version_id: int
+) -> None:
+    """The 사유 (main_reason) carries the recommended player's batting-order rationale.
+
+    No LLM provider runs in tests, so the deterministic fallback rationale
+    '규칙 기반 배정: N번' surfaces in main_reason for each slot.
+    """
+    body = _replay_body(_game_id, _team_id, _model_version_id)
+    client.post("/api/jobs/replay-evaluation", json=body)
+
+    rows = client.get(f"/api/games/{_game_id}/lineup-comparison").json()["rows"]
+    for row in rows:
+        assert row["main_reason"] == f"규칙 기반 배정: {row['batting_order']}번"
+
+
 # ---------------------------------------------------------------------------
 # GET /api/games/{id}/players/compare
 # ---------------------------------------------------------------------------
