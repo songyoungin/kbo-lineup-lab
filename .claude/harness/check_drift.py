@@ -11,6 +11,7 @@ Two CLAUDE.md marker lines are part of the contract and parsed verbatim
 from __future__ import annotations
 
 import re
+import subprocess
 import sys
 from pathlib import Path
 
@@ -46,6 +47,15 @@ def _doc_files(root: Path) -> list[Path]:
     return files
 
 
+def _git_ignored(root: Path, rel: str) -> bool:
+    """Return True if rel is git-ignored under root (runtime/secret files like
+    .env or *.db legitimately referenced by docs but absent in a fresh checkout)."""
+    result = subprocess.run(
+        ["git", "check-ignore", rel], cwd=root, capture_output=True, text=True
+    )
+    return result.returncode == 0
+
+
 def check_referenced_paths(root: Path) -> list[str]:
     findings: list[str] = []
     for doc in _doc_files(root):
@@ -54,7 +64,7 @@ def check_referenced_paths(root: Path) -> list[str]:
             raw = match.group(1).rstrip("/.,)")
             if "*" in raw:
                 continue
-            if not (root / raw).exists():
+            if not (root / raw).exists() and not _git_ignored(root, raw):
                 findings.append(f"{doc.relative_to(root)}: references missing path '{raw}'")
     return findings
 

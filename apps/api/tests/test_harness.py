@@ -93,6 +93,17 @@ def test_check_drift_ignores_bare_scripts_path(tmp_path: Path) -> None:
     assert result.returncode == 0, result.stdout + result.stderr
 
 
+def test_check_drift_skips_gitignored_missing_path(tmp_path: Path) -> None:
+    """A referenced path that is git-ignored and absent (runtime/secret file) is not flagged."""
+    subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
+    (tmp_path / ".gitignore").write_text("*.db\n.env\n")
+    (tmp_path / "CLAUDE.md").write_text(
+        "Creates `apps/api/local.db` at runtime; secrets in `apps/api/.env`.\n"
+    )
+    result = _run([str(HARNESS / "check_drift.py")], cwd=tmp_path)
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
 def test_check_drift_frontmatter_name_required_only_for_agents(tmp_path: Path) -> None:
     """Agents must declare `name`; slash commands (named by filename) need not."""
     _init_fake_repo(tmp_path)
