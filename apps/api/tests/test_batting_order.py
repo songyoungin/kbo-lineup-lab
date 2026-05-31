@@ -101,3 +101,22 @@ def test_parse_and_validate_rejects_duplicate_order() -> None:
         "lineup_summary_ko": "요약",
     }
     assert parse_and_validate(raw, assigned) is None
+
+
+def test_system_prompt_states_team_run_objective() -> None:
+    """System prompt encodes the team-run-production objective and Korean-output rule."""
+    from app.lineup_model.batting_order.prompt import SYSTEM_PROMPT
+
+    assert "득점" in SYSTEM_PROMPT
+    assert "한국어" in SYSTEM_PROMPT
+
+
+def test_build_user_prompt_lists_all_assigned_players() -> None:
+    """User prompt includes every assigned player_id and the opponent handedness."""
+    from app.lineup_model.batting_order.prompt import build_user_prompt
+
+    assigned = _assigned_three()
+    text = build_user_prompt(assigned, Handedness.LEFT)
+    for pid in (1, 2, 3):
+        assert f"player_id={pid}" in text
+    assert "L" in text
