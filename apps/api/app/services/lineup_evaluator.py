@@ -13,14 +13,17 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 from datetime import UTC, datetime
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.lineup_model.batting_order.orderer import order as order_batting_lineup
+from app.lineup_model.batting_order.provider import build_provider
 from app.lineup_model.lineup_score import compute_lineup_score
 from app.lineup_model.player_score import compute_player_score
-from app.lineup_model.recommendation import generate_recommendation
+from app.lineup_model.recommendation import select_and_assign_positions
 from app.lineup_model.types import (
     Handedness,
     HitterStats,
@@ -340,22 +343,19 @@ def evaluate_lineup_for_run(
     # ------------------------------------------------------------------
     # 3. Run recommendation (pure)
     # ------------------------------------------------------------------
-    recommended = generate_recommendation(eligible, opp_handedness)
+    assigned = select_and_assign_positions(eligible, opp_handedness)
+    provider = build_provider()
+    order_result = order_batting_lineup(assigned, opp_handedness, provider)
+    stats_by_player = {s.player_id: s for s in eligible}
+    recommended = compute_lineup_score(order_result.slots, stats_by_player, opp_handedness)
 
     # ------------------------------------------------------------------
     # 4. Persist recommended_lineup_rows
     # ------------------------------------------------------------------
-    stats_by_player = {s.player_id: s for s in eligible}
-
     for slot in sorted(recommended.slots, key=lambda s: s.batting_order):
         stats = stats_by_player[slot.player_id]
-        # Build a concise rationale string
         breakdown = compute_player_score(stats, slot.position, opp_handedness)
-        rationale_parts = []
-        if breakdown is not None:
-            for r in breakdown.reasons:
-                rationale_parts.append(f"{r.component}={r.value:.3f}(w={r.weight}): {r.note}")
-        rationale = "; ".join(rationale_parts)
+        rationale = order_result.rationale_ko_by_player.get(slot.player_id, "")
 
         session.add(
             RecommendedLineupRow(
@@ -402,14 +402,7 @@ def evaluate_lineup_for_run(
         ],
     }
 
-    summary_text = (
-        f"Recommended lineup score: {recommended.total_score:.4f}. "
-        f"Weighted player average: {recommended.weighted_player_score:.4f}. "
-        f"Position completeness: {recommended.position_completeness_adjustment:+.2f}. "
-        f"Handedness balance: {recommended.handedness_balance_adjustment:+.2f}. "
-        f"Players added vs actual: {additions}. "
-        f"Players removed vs actual: {removals}."
-    )
+    summary_text = order_result.summary_ko
 
     session.add(
         LineupEvaluationSummary(
@@ -425,6 +418,10 @@ def evaluate_lineup_for_run(
     run.status = "completed"
     run.output_hash = _lineup_output_hash(recommended)
     run.finished_at = datetime.now(UTC)
+    run.model_config_json = {
+        "batting_order_source": order_result.source,
+        "llm_model": os.environ.get("LINEUP_LLM_MODEL", "gpt-4.1"),
+    }
 
     session.flush()
     return run

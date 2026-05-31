@@ -369,3 +369,49 @@ def test_build_hitter_stats_raises_typeerror_on_non_numeric(session: Session) ->
     assert "OPS" in msg
     assert "42" in msg  # player_id surfaces in the error message
     assert "list" in msg  # type name surfaces too
+
+
+def test_evaluate_persists_llm_rationale_and_summary(
+    session: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Injecting an LLM provider persists Korean per-slot rationale and summary.
+
+    The fake provider parses player_id=<n> tokens from the user prompt and maps
+    them in order to batting slots 1..9, returning a valid structured payload.
+    Verifies rows carry Korean rationale, summary_text is the LLM summary, and
+    the run completes with an output_hash.
+    """
+    import re
+
+    import app.services.lineup_evaluator as evaluator_mod
+
+    class _FakeProvider:
+        def complete(
+            self, *, system: str, user: str, schema: dict[str, object]
+        ) -> dict[str, object]:
+            ids = [int(m) for m in re.findall(r"player_id=(\d+)", user)]
+            return {
+                "batting_order": [
+                    {
+                        "batting_order": i + 1,
+                        "player_id": pid,
+                        "rationale_ko": f"{i + 1}번 한국어 근거",
+                    }
+                    for i, pid in enumerate(ids)
+                ],
+                "lineup_summary_ko": "LLM이 작성한 한국어 요약",
+            }
+
+    monkeypatch.setattr(evaluator_mod, "build_provider", lambda: _FakeProvider())
+
+    run = _seed_evaluation_run(session)
+    evaluate_lineup_for_run(session, run=run)
+    session.commit()
+
+    rows = session.query(RecommendedLineupRow).filter_by(evaluation_run_id=run.id).all()
+    summary = session.query(LineupEvaluationSummary).filter_by(evaluation_run_id=run.id).one()
+    assert len(rows) == 9
+    assert all("근거" in (r.rationale or "") for r in rows)
+    assert summary.summary_text == "LLM이 작성한 한국어 요약"
+    session.refresh(run)
+    assert run.output_hash is not None
