@@ -1,0 +1,14 @@
+name: harness
+on:
+  push:
+  pull_request:
+jobs:
+  drift:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Structural harness drift check
+        run: python3 .claude/harness/check_drift.py
