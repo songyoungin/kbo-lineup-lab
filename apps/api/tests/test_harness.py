@@ -93,6 +93,21 @@ def test_check_drift_ignores_bare_scripts_path(tmp_path: Path) -> None:
     assert result.returncode == 0, result.stdout + result.stderr
 
 
+def test_check_drift_frontmatter_name_required_only_for_agents(tmp_path: Path) -> None:
+    """Agents must declare `name`; slash commands (named by filename) need not."""
+    _init_fake_repo(tmp_path)
+    commands = tmp_path / ".claude" / "commands"
+    commands.mkdir(parents=True)
+    (commands / "x.md").write_text("---\ndescription: do x\n---\nbody\n")
+    agents = tmp_path / ".claude" / "agents"
+    agents.mkdir(parents=True)
+    (agents / "y.md").write_text("---\ndescription: do y\n---\nbody\n")
+    result = _run([str(HARNESS / "check_drift.py")], cwd=tmp_path)
+    assert result.returncode == 1
+    assert "agents/y.md" in result.stdout
+    assert "commands/x.md" not in result.stdout
+
+
 def _hook(command: str, env_extra: dict[str, str]) -> subprocess.CompletedProcess[str]:
     payload = json.dumps({"tool_input": {"command": command}})
     env = {**os.environ, **env_extra}

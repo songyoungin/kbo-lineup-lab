@@ -134,7 +134,9 @@ def check_frontmatter(root: Path) -> list[str]:
             findings.append(f"{md.relative_to(root)}: missing YAML frontmatter")
             continue
         front = block.group(1)
-        if not re.search(r"(?m)^name:\s*\S", front) and "skills/" not in str(md):
+        # Only agents require a `name`; slash commands are named by filename and
+        # skills carry their own name already.
+        if "/agents/" in str(md) and not re.search(r"(?m)^name:\s*\S", front):
             findings.append(f"{md.relative_to(root)}: frontmatter missing 'name'")
         if not re.search(r"(?m)^description:\s*\S", front):
             findings.append(f"{md.relative_to(root)}: frontmatter missing 'description'")
