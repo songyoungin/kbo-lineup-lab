@@ -23,7 +23,7 @@ from sqlalchemy.orm import Session, sessionmaker
 
 import app.models  # noqa: F401 — registers all ORM models with Base.metadata
 from app.db.base import Base
-from app.lineup_model.recommendation import generate_recommendation
+from app.lineup_model.recommendation import generate_recommendation, select_and_assign_positions
 from app.lineup_model.types import Handedness, HitterStats, Position
 from app.models.evaluation import (
     LineupEvaluationRun,
@@ -338,6 +338,17 @@ def test_evaluate_lineup_re_run_does_not_duplicate_rows(session: Session) -> Non
     assert run.finished_at == first_finished_at
 
 
+def test_select_and_assign_positions_is_deterministic_and_complete() -> None:
+    """동일 입력에 대해 9개 포지션이 모두 채워지고 결과가 결정론적인지 검증."""
+    pool = _make_pool()
+    first = select_and_assign_positions(pool, Handedness.RIGHT)
+    second = select_and_assign_positions(pool, Handedness.RIGHT)
+
+    assert len(first) == 9
+    assert {str(p) for p in first} == {"C", "1B", "2B", "3B", "SS", "LF", "CF", "RF", "DH"}
+    assert {p: s.player_id for p, s in first.items()} == {p: s.player_id for p, s in second.items()}
+
+
 def test_build_hitter_stats_raises_typeerror_on_non_numeric(session: Session) -> None:
     """build_hitter_stats must raise TypeError when stats_json holds non-numeric data.
 
@@ -358,3 +369,49 @@ def test_build_hitter_stats_raises_typeerror_on_non_numeric(session: Session) ->
     assert "OPS" in msg
     assert "42" in msg  # player_id surfaces in the error message
     assert "list" in msg  # type name surfaces too
+
+
+def test_evaluate_persists_llm_rationale_and_summary(
+    session: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Injecting an LLM provider persists Korean per-slot rationale and summary.
+
+    The fake provider parses player_id=<n> tokens from the user prompt and maps
+    them in order to batting slots 1..9, returning a valid structured payload.
+    Verifies rows carry Korean rationale, summary_text is the LLM summary, and
+    the run completes with an output_hash.
+    """
+    import re
+
+    import app.services.lineup_evaluator as evaluator_mod
+
+    class _FakeProvider:
+        def complete(
+            self, *, system: str, user: str, schema: dict[str, object]
+        ) -> dict[str, object]:
+            ids = [int(m) for m in re.findall(r"player_id=(\d+)", user)]
+            return {
+                "batting_order": [
+                    {
+                        "batting_order": i + 1,
+                        "player_id": pid,
+                        "rationale_ko": f"{i + 1}번 한국어 근거",
+                    }
+                    for i, pid in enumerate(ids)
+                ],
+                "lineup_summary_ko": "LLM이 작성한 한국어 요약",
+            }
+
+    monkeypatch.setattr(evaluator_mod, "build_provider", lambda: _FakeProvider())
+
+    run = _seed_evaluation_run(session)
+    evaluate_lineup_for_run(session, run=run)
+    session.commit()
+
+    rows = session.query(RecommendedLineupRow).filter_by(evaluation_run_id=run.id).all()
+    summary = session.query(LineupEvaluationSummary).filter_by(evaluation_run_id=run.id).one()
+    assert len(rows) == 9
+    assert all("근거" in (r.rationale or "") for r in rows)
+    assert summary.summary_text == "LLM이 작성한 한국어 요약"
+    session.refresh(run)
+    assert run.output_hash is not None
