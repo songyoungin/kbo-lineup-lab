@@ -39,3 +39,4 @@ apps/web/out/
 # Local agent/tooling artifacts
 .playwright-mcp/
 .claude/scheduled_tasks.lock
+.claude/harness/.audit-state.json
