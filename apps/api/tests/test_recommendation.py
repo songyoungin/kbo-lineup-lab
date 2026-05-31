@@ -23,7 +23,7 @@ from sqlalchemy.orm import Session, sessionmaker
 
 import app.models  # noqa: F401 — registers all ORM models with Base.metadata
 from app.db.base import Base
-from app.lineup_model.recommendation import generate_recommendation
+from app.lineup_model.recommendation import generate_recommendation, select_and_assign_positions
 from app.lineup_model.types import Handedness, HitterStats, Position
 from app.models.evaluation import (
     LineupEvaluationRun,
@@ -336,6 +336,17 @@ def test_evaluate_lineup_re_run_does_not_duplicate_rows(session: Session) -> Non
     session.refresh(run)
     assert run.output_hash == first_output_hash
     assert run.finished_at == first_finished_at
+
+
+def test_select_and_assign_positions_is_deterministic_and_complete() -> None:
+    """동일 입력에 대해 9개 포지션이 모두 채워지고 결과가 결정론적인지 검증."""
+    pool = _make_pool()
+    first = select_and_assign_positions(pool, Handedness.RIGHT)
+    second = select_and_assign_positions(pool, Handedness.RIGHT)
+
+    assert len(first) == 9
+    assert {str(p) for p in first} == {"C", "1B", "2B", "3B", "SS", "LF", "CF", "RF", "DH"}
+    assert {p: s.player_id for p, s in first.items()} == {p: s.player_id for p, s in second.items()}
 
 
 def test_build_hitter_stats_raises_typeerror_on_non_numeric(session: Session) -> None:

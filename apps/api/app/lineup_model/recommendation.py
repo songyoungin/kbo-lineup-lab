@@ -159,6 +159,38 @@ def _assign_batting_order(
     return slots
 
 
+def select_and_assign_positions(
+    eligible_players: list[HitterStats],
+    opp_handedness: Handedness,
+) -> dict[Position, HitterStats]:
+    """Greedily assign the highest-scoring eligible player to each defensive position.
+
+    Args:
+        eligible_players: Pool of available hitters.
+        opp_handedness: Opposing starter's handedness.
+
+    Returns:
+        Mapping of position to the assigned HitterStats (9 entries).
+
+    Raises:
+        ValueError: If any of the 9 positions cannot be filled from the pool.
+    """
+    assigned: dict[Position, HitterStats] = {}
+    excluded_ids: set[int] = set()
+
+    for position in _POSITIONS_TO_FILL:
+        best = _best_player_for_position(eligible_players, position, opp_handedness, excluded_ids)
+        if best is None:
+            raise ValueError(
+                f"Cannot fill position {position}: no eligible player remaining in pool. "
+                f"Assigned so far: {list(assigned.keys())}"
+            )
+        assigned[position] = best
+        excluded_ids.add(best.player_id)
+
+    return assigned
+
+
 def generate_recommendation(
     eligible_players: list[HitterStats],
     opp_handedness: Handedness,
@@ -177,20 +209,7 @@ def generate_recommendation(
     Raises:
         ValueError: If no valid 9-player lineup can be assembled.
     """
-    assigned: dict[Position, HitterStats] = {}
-    excluded_ids: set[int] = set()
-
-    for position in _POSITIONS_TO_FILL:
-        best = _best_player_for_position(eligible_players, position, opp_handedness, excluded_ids)
-        if best is None:
-            raise ValueError(
-                f"Cannot fill position {position}: no eligible player remaining in pool. "
-                f"Assigned so far: {list(assigned.keys())}"
-            )
-        assigned[position] = best
-        excluded_ids.add(best.player_id)
-
+    assigned = select_and_assign_positions(eligible_players, opp_handedness)
     slots = _assign_batting_order(assigned, opp_handedness)
     stats_by_player = {stats.player_id: stats for stats in eligible_players}
-
     return compute_lineup_score(tuple(slots), stats_by_player, opp_handedness)
