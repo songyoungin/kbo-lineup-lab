@@ -160,3 +160,97 @@ def test_openai_provider_parses_json_content(mock_openai_cls: MagicMock) -> None
     out = provider.complete(system="sys", user="usr", schema={"name": "x"})
     assert out == {"lineup_summary_ko": "ok", "batting_order": []}
     mock_client.chat.completions.create.assert_called_once()
+
+
+def _full_assigned() -> dict[Position, HitterStats]:
+    """Build a full 9-position assignment for orderer tests."""
+    positions = [
+        Position.C,
+        Position.FIRST,
+        Position.SECOND,
+        Position.THIRD,
+        Position.SHORT,
+        Position.LEFT,
+        Position.CENTER,
+        Position.RIGHT,
+        Position.DH,
+    ]
+    out: dict[Position, HitterStats] = {}
+    for i, pos in enumerate(positions, start=1):
+        out[pos] = HitterStats(
+            player_id=i,
+            handedness=Handedness.RIGHT,
+            primary_position=pos,
+            ops=0.700 + i * 0.01,
+            obp=0.330,
+            slg=0.420,
+        )
+    return out
+
+
+class _FakeProvider:
+    """Fake provider returning a preset dict or raising, for orderer tests."""
+
+    def __init__(self, payload: dict[str, object] | None = None, raises: bool = False) -> None:
+        self._payload = payload
+        self._raises = raises
+        self.calls = 0
+
+    def complete(self, *, system: str, user: str, schema: dict[str, object]) -> dict[str, object]:
+        self.calls += 1
+        if self._raises:
+            raise RuntimeError("boom")
+        assert self._payload is not None
+        return self._payload
+
+
+def test_order_uses_llm_when_output_valid() -> None:
+    """A valid LLM output yields source='llm' with slots and rationale."""
+    from app.lineup_model.batting_order.orderer import order
+
+    assigned = _full_assigned()
+    payload: dict[str, object] = {
+        "batting_order": [
+            {"batting_order": i, "player_id": i, "rationale_ko": f"{i}번 근거"}
+            for i in range(1, 10)
+        ],
+        "lineup_summary_ko": "팀 득점 극대화 타순",
+    }
+    result = order(assigned, Handedness.RIGHT, _FakeProvider(payload=payload))
+    assert result.source == "llm"
+    assert [s.batting_order for s in result.slots] == list(range(1, 10))
+    assert result.summary_ko == "팀 득점 극대화 타순"
+    assert result.rationale_ko_by_player[1] == "1번 근거"
+
+
+def test_order_falls_back_when_provider_is_none() -> None:
+    """A None provider uses the deterministic fallback (source='fallback')."""
+    from app.lineup_model.batting_order.orderer import order
+
+    assigned = _full_assigned()
+    result = order(assigned, Handedness.RIGHT, None)
+    assert result.source == "fallback"
+    assert len(result.slots) == 9
+    assert sorted(s.batting_order for s in result.slots) == list(range(1, 10))
+
+
+def test_order_retries_then_falls_back_on_invalid_output() -> None:
+    """Invalid output triggers one retry, then fallback (provider called twice)."""
+    from app.lineup_model.batting_order.orderer import order
+
+    assigned = _full_assigned()
+    bad: dict[str, object] = {"batting_order": [], "lineup_summary_ko": "x"}  # wrong count
+    provider = _FakeProvider(payload=bad)
+    result = order(assigned, Handedness.RIGHT, provider)
+    assert result.source == "fallback"
+    assert provider.calls == 2
+
+
+def test_order_falls_back_on_provider_exception() -> None:
+    """A provider exception leads to fallback."""
+    from app.lineup_model.batting_order.orderer import order
+
+    assigned = _full_assigned()
+    provider = _FakeProvider(raises=True)
+    result = order(assigned, Handedness.RIGHT, provider)
+    assert result.source == "fallback"
