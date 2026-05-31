@@ -78,3 +78,9 @@ repos:
         entry: bash -c 'cd apps/web && npx --no-install prettier --check .'
         files: ^apps/web/.*\.(js|jsx|ts|tsx|json|css|md)$
         pass_filenames: false
+      - id: harness-drift
+        name: harness structural drift
+        language: system
+        entry: python3 .claude/harness/check_drift.py
+        pass_filenames: false
+        always_run: true
