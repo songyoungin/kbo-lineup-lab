@@ -50,3 +50,43 @@ def test_audit_check_fails_when_semantic_false(tmp_path: Path) -> None:
     )
     chk = _run([str(HARNESS / "audit_state.py"), "check", "--root", str(tmp_path), "--head", head])
     assert chk.returncode == 1
+
+
+def _init_fake_repo(root: Path) -> None:
+    (root / ".git").mkdir()
+
+
+def test_check_drift_passes_on_clean_repo(tmp_path: Path) -> None:
+    _init_fake_repo(tmp_path)
+    (tmp_path / "CLAUDE.md").write_text("# Repo\nNo tracked-path references here.\n")
+    result = _run([str(HARNESS / "check_drift.py")], cwd=tmp_path)
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_check_drift_flags_missing_path(tmp_path: Path) -> None:
+    _init_fake_repo(tmp_path)
+    (tmp_path / "CLAUDE.md").write_text("See `apps/api/app/does_not_exist.py` for details.\n")
+    result = _run([str(HARNESS / "check_drift.py")], cwd=tmp_path)
+    assert result.returncode == 1
+    assert "does_not_exist.py" in result.stdout
+
+
+def test_check_drift_flags_unknown_cli_command(tmp_path: Path) -> None:
+    _init_fake_repo(tmp_path)
+    app_dir = tmp_path / "apps" / "api" / "app"
+    app_dir.mkdir(parents=True)
+    (app_dir / "cli.py").write_text('@app.command("run")\ndef run() -> None: ...\n')
+    (tmp_path / "CLAUDE.md").write_text(
+        "Entry point `apps/api/app/cli.py`. Use kbo-lab frobnicate to ingest.\n"
+    )
+    result = _run([str(HARNESS / "check_drift.py")], cwd=tmp_path)
+    assert result.returncode == 1
+    assert "frobnicate" in result.stdout
+
+
+def test_check_drift_ignores_bare_scripts_path(tmp_path: Path) -> None:
+    """A bare `scripts/...` reference (apps/api-relative) is not repo-root validated."""
+    _init_fake_repo(tmp_path)
+    (tmp_path / "CLAUDE.md").write_text("Run `scripts/seed_demo.py` from the api app dir.\n")
+    result = _run([str(HARNESS / "check_drift.py")], cwd=tmp_path)
+    assert result.returncode == 0, result.stdout + result.stderr
