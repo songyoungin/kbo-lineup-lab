@@ -8,6 +8,7 @@ mypy/ruff scope.
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -90,3 +91,65 @@ def test_check_drift_ignores_bare_scripts_path(tmp_path: Path) -> None:
     (tmp_path / "CLAUDE.md").write_text("Run `scripts/seed_demo.py` from the api app dir.\n")
     result = _run([str(HARNESS / "check_drift.py")], cwd=tmp_path)
     assert result.returncode == 0, result.stdout + result.stderr
+
+
+def _hook(command: str, env_extra: dict[str, str]) -> subprocess.CompletedProcess[str]:
+    payload = json.dumps({"tool_input": {"command": command}})
+    env = {**os.environ, **env_extra}
+    return subprocess.run(
+        [sys.executable, str(HOOK)], input=payload, capture_output=True, text=True, env=env
+    )
+
+
+def test_hook_blocks_commit_on_main(tmp_path: Path) -> None:
+    r = _hook("git commit -m x", {"HARNESS_ROOT": str(tmp_path), "HARNESS_BRANCH": "main"})
+    assert r.returncode == 2
+    assert "main" in r.stderr
+
+
+def test_hook_allows_commit_on_feature_branch(tmp_path: Path) -> None:
+    r = _hook("git commit -m x", {"HARNESS_ROOT": str(tmp_path), "HARNESS_BRANCH": "feature/x"})
+    assert r.returncode == 0
+
+
+def test_hook_blocks_git_dash_c(tmp_path: Path) -> None:
+    r = _hook("git -C /x status", {"HARNESS_ROOT": str(tmp_path), "HARNESS_BRANCH": "feature/x"})
+    assert r.returncode == 2
+
+
+def test_hook_blocks_force_push(tmp_path: Path) -> None:
+    r = _hook(
+        "git push --force origin x", {"HARNESS_ROOT": str(tmp_path), "HARNESS_BRANCH": "feature/x"}
+    )
+    assert r.returncode == 2
+
+
+def test_hook_blocks_raw_ruff(tmp_path: Path) -> None:
+    r = _hook("uv run ruff check .", {"HARNESS_ROOT": str(tmp_path), "HARNESS_BRANCH": "feature/x"})
+    assert r.returncode == 2
+    assert "pre-commit" in r.stderr
+
+
+def test_hook_blocks_gh_pr_create_without_marker(tmp_path: Path) -> None:
+    r = _hook(
+        "gh pr create --fill",
+        {"HARNESS_ROOT": str(tmp_path), "HARNESS_BRANCH": "feature/x", "HARNESS_HEAD": "h1"},
+    )
+    assert r.returncode == 2
+    assert "/harness-audit" in r.stderr
+
+
+def test_hook_allows_gh_pr_create_with_fresh_marker(tmp_path: Path) -> None:
+    _run(
+        [str(HARNESS / "record_audit.py"), "true", "true", "--root", str(tmp_path), "--head", "h1"]
+    )
+    r = _hook(
+        "gh pr create --fill",
+        {"HARNESS_ROOT": str(tmp_path), "HARNESS_BRANCH": "feature/x", "HARNESS_HEAD": "h1"},
+    )
+    assert r.returncode == 0
+
+
+def test_hook_allows_plain_command(tmp_path: Path) -> None:
+    r = _hook("ls -la", {"HARNESS_ROOT": str(tmp_path), "HARNESS_BRANCH": "feature/x"})
+    assert r.returncode == 0
