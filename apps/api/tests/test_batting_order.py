@@ -167,6 +167,27 @@ def test_openai_provider_parses_json_content(mock_openai_cls: MagicMock) -> None
     assert kwargs["response_format"] == {"type": "json_schema", "json_schema": {"name": "x"}}
 
 
+@patch("app.lineup_model.batting_order.provider.OpenAI")
+def test_openai_provider_omits_temperature_for_reasoning_models(mock_openai_cls: MagicMock) -> None:
+    """Reasoning models (gpt-5 family) reject non-default temperature, so it is omitted."""
+    from app.lineup_model.batting_order.provider import OpenAIProvider
+
+    mock_client = MagicMock()
+    mock_openai_cls.return_value = mock_client
+    message = MagicMock()
+    message.content = json.dumps({"lineup_summary_ko": "ok", "batting_order": []})
+    mock_client.chat.completions.create.return_value.choices = [MagicMock(message=message)]
+
+    provider = OpenAIProvider(api_key="sk-test", model="gpt-5.5", timeout_s=5.0)
+    provider.complete(system="sys", user="usr", schema={"name": "x"})
+
+    kwargs = mock_client.chat.completions.create.call_args.kwargs
+    assert kwargs["model"] == "gpt-5.5"
+    assert "temperature" not in kwargs
+    assert kwargs["seed"] == 0
+    assert kwargs["response_format"] == {"type": "json_schema", "json_schema": {"name": "x"}}
+
+
 def _full_assigned() -> dict[Position, HitterStats]:
     """Build a full 9-position assignment for orderer tests."""
     positions = [

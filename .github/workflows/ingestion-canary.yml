@@ -26,6 +26,13 @@ jobs:
     runs-on: ubuntu-latest
     env:
       KBO_DATABASE_URL: ${{ secrets.KBO_DATABASE_URL || 'sqlite:////tmp/kbo_lineup_lab_canary.db' }}
+      # LLM batting-order layer. Falls back to the deterministic order on any
+      # failure, so a missing key or OpenAI outage never fails the canary.
+      LINEUP_LLM_ENABLED: "true"
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      LINEUP_LLM_MODEL: gpt-5.5
+      # gpt-5.5 reasoning runs take ~30s; keep well above to avoid silent fallback.
+      LINEUP_LLM_TIMEOUT_S: "60"
     steps:
       - uses: actions/checkout@v6.0.2
 

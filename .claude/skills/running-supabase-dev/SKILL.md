@@ -13,6 +13,12 @@ The app is Postgres-capable (psycopg3 driver + dialect-aware Alembic migrations)
 so this only requires pointing `KBO_DATABASE_URL` at Supabase. Data shown is
 whatever `kbo-lab run --date` or the ingestion canary has persisted.
 
+Note: the `ingestion-canary` cron runs with the LLM batting-order layer ON
+(`gpt-5.5`), so Supabase rows it persists carry LLM-ordered lineups and
+per-player rationale (shown as the pregame comparison reason). A *local* run
+using the `.env.example` defaults (LLM off) instead shows the deterministic
+fallback order, so the two sources can differ for the same game.
+
 For the SQLite/fixture path instead, use the `running-fixture-demo` skill.
 
 **Critical gotcha:** open the web at **`http://localhost:3000`**, NOT

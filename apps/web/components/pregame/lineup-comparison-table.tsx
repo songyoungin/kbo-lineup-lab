@@ -47,10 +47,7 @@ const COLUMNS: Column<LineupComparisonRow>[] = [
   {
     header: "사유",
     accessor: (row) => (
-      <span
-        className="text-xs text-zinc-600 max-w-xs block truncate"
-        title={row.main_reason}
-      >
+      <span className="text-xs text-zinc-600 max-w-sm block whitespace-normal leading-relaxed">
         {row.main_reason}
       </span>
     ),

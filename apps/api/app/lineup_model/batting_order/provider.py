@@ -34,16 +34,29 @@ class OpenAIProvider:
         Raises:
             ValueError: If the response is not a JSON object.
         """
-        response = self._client.chat.completions.create(
-            model=self._model,
-            temperature=0,
-            seed=0,
-            messages=[
-                {"role": "system", "content": system},
-                {"role": "user", "content": user},
-            ],
-            response_format={"type": "json_schema", "json_schema": schema},
-        )
+        # Reasoning models (gpt-5 family, o-series) reject a non-default
+        # temperature; only models that accept it get temperature=0 pinned.
+        if self._model.startswith(("gpt-5", "o1", "o3", "o4")):
+            response = self._client.chat.completions.create(
+                model=self._model,
+                seed=0,
+                messages=[
+                    {"role": "system", "content": system},
+                    {"role": "user", "content": user},
+                ],
+                response_format={"type": "json_schema", "json_schema": schema},
+            )
+        else:
+            response = self._client.chat.completions.create(
+                model=self._model,
+                temperature=0,
+                seed=0,
+                messages=[
+                    {"role": "system", "content": system},
+                    {"role": "user", "content": user},
+                ],
+                response_format={"type": "json_schema", "json_schema": schema},
+            )
         content = response.choices[0].message.content or "{}"
         parsed = json.loads(content)
         if not isinstance(parsed, dict):
