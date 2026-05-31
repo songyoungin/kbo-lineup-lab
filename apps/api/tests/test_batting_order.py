@@ -2,6 +2,11 @@
 
 from __future__ import annotations
 
+import json
+from unittest.mock import MagicMock, patch
+
+import pytest
+
 from app.lineup_model.types import Handedness, HitterStats, LineupSlot, Position
 
 
@@ -120,3 +125,38 @@ def test_build_user_prompt_lists_all_assigned_players() -> None:
     for pid in (1, 2, 3):
         assert f"player_id={pid}" in text
     assert "L" in text
+
+
+def test_build_provider_returns_none_when_disabled(monkeypatch: pytest.MonkeyPatch) -> None:
+    """build_provider returns None when LINEUP_LLM_ENABLED is unset/false."""
+    from app.lineup_model.batting_order.provider import build_provider
+
+    monkeypatch.delenv("LINEUP_LLM_ENABLED", raising=False)
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    assert build_provider() is None
+
+
+def test_build_provider_returns_none_without_api_key(monkeypatch: pytest.MonkeyPatch) -> None:
+    """build_provider returns None when enabled but no API key is present."""
+    from app.lineup_model.batting_order.provider import build_provider
+
+    monkeypatch.setenv("LINEUP_LLM_ENABLED", "true")
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    assert build_provider() is None
+
+
+@patch("app.lineup_model.batting_order.provider.OpenAI")
+def test_openai_provider_parses_json_content(mock_openai_cls: MagicMock) -> None:
+    """OpenAIProvider.complete parses the response content (JSON string) into a dict."""
+    from app.lineup_model.batting_order.provider import OpenAIProvider
+
+    mock_client = MagicMock()
+    mock_openai_cls.return_value = mock_client
+    message = MagicMock()
+    message.content = json.dumps({"lineup_summary_ko": "ok", "batting_order": []})
+    mock_client.chat.completions.create.return_value.choices = [MagicMock(message=message)]
+
+    provider = OpenAIProvider(api_key="sk-test", model="gpt-4.1", timeout_s=5.0)
+    out = provider.complete(system="sys", user="usr", schema={"name": "x"})
+    assert out == {"lineup_summary_ko": "ok", "batting_order": []}
+    mock_client.chat.completions.create.assert_called_once()
