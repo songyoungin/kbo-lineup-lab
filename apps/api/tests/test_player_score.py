@@ -361,3 +361,40 @@ def test_compute_player_score_reasons_have_notes() -> None:
     assert result is not None
     for reason in result.reasons:
         assert isinstance(reason.note, str)
+
+
+# ---------------------------------------------------------------------------
+# season_offense — advanced metrics (wOBA / wRC+)
+# ---------------------------------------------------------------------------
+
+
+def test_season_offense_falls_back_to_ops_formula_without_woba() -> None:
+    """woba/wrc_plus absent → identical to the legacy 0.60/0.25/0.15 formula."""
+    stats = _make_stats(ops=0.800, obp=0.350, slg=0.450)
+    score, _ = season_offense(stats)
+    assert score == 0.60 * 0.800 + 0.25 * 0.350 + 0.15 * 0.450
+
+
+def test_season_offense_uses_woba_and_wrc_plus_when_present() -> None:
+    """woba scaled to OPS space + wRC+ quality multiplier (clamped)."""
+    stats = _make_stats(ops=0.800, obp=0.350, slg=0.450, woba=0.360, wrc_plus=130.0)
+    score, _ = season_offense(stats)
+    base = 0.50 * 0.800 + 0.30 * (0.360 * 2.3) + 0.20 * 0.350
+    expected = base * 1.15  # 130/100 clamped to max 1.15
+    assert abs(score - expected) < 1e-9
+
+
+def test_season_offense_wrc_plus_multiplier_clamps_low() -> None:
+    stats = _make_stats(ops=0.800, obp=0.350, slg=0.450, woba=0.300, wrc_plus=40.0)
+    score, _ = season_offense(stats)
+    base = 0.50 * 0.800 + 0.30 * (0.300 * 2.3) + 0.20 * 0.350
+    assert abs(score - base * 0.85) < 1e-9  # 40/100 clamped to min 0.85
+
+
+def test_season_offense_wrc_plus_applies_to_legacy_base_without_woba() -> None:
+    """wRC+ present but woba absent → multiplier applies to the legacy base."""
+    stats = _make_stats(ops=0.800, obp=0.350, slg=0.450, wrc_plus=110.0)
+    score, _ = season_offense(stats)
+    base = 0.60 * 0.800 + 0.25 * 0.350 + 0.15 * 0.450
+    expected = base * 1.10  # 110/100, within clamp
+    assert abs(score - expected) < 1e-9

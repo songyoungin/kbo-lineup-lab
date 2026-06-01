@@ -30,26 +30,51 @@ _W_MATCHUP = 0.20
 _W_POSITION = 0.10
 _W_RHYTHM = 0.05
 
+# wOBA → OPS-equivalent scale factor (keeps season_offense in OPS space so the
+# composite weighted average stays comparable across components).
+_WOBA_TO_OPS = 2.3
+_WRC_MULT_MIN = 0.85
+_WRC_MULT_MAX = 1.15
+
 # ---------------------------------------------------------------------------
 # Season offense
 # ---------------------------------------------------------------------------
 
 
 def season_offense(stats: HitterStats) -> tuple[float, ScoringReason]:
-    """Compute season offense score: OPS 60 % + OBP 25 % + SLG 15 %.
+    """Compute season offense.
+
+    When advanced metrics are present: blend OPS, wOBA (scaled to OPS space),
+    and OBP, then apply a clamped wRC+ quality multiplier. When wOBA is absent
+    the legacy OPS/OBP/SLG formula is used unchanged (so missing data is a
+    no-op). wRC+ alone (no wOBA) still applies its multiplier to the legacy base.
 
     Args:
         stats: Hitter season statistics.
 
     Returns:
-        (score, reason) where score is in [0, 2+] (raw rate-stat space).
+        (score, reason) where score is in OPS-space rate-stat units.
     """
-    score = 0.60 * stats.ops + 0.25 * stats.obp + 0.15 * stats.slg
+    if stats.woba is not None:
+        base = 0.50 * stats.ops + 0.30 * (stats.woba * _WOBA_TO_OPS) + 0.20 * stats.obp
+        note_metric = f"wOBA={stats.woba:.3f}"
+    else:
+        base = 0.60 * stats.ops + 0.25 * stats.obp + 0.15 * stats.slg
+        note_metric = f"OPS={stats.ops:.3f} OBP={stats.obp:.3f} SLG={stats.slg:.3f}"
+
+    if stats.wrc_plus is not None:
+        mult = min(_WRC_MULT_MAX, max(_WRC_MULT_MIN, stats.wrc_plus / 100.0))
+        score = base * mult
+        note = f"{note_metric} wRC+={stats.wrc_plus:.0f} mult={mult:.3f}"
+    else:
+        score = base
+        note = note_metric
+
     reason = ScoringReason(
         component="season_offense",
         value=score,
         weight=_W_SEASON,
-        note=f"OPS={stats.ops:.3f} OBP={stats.obp:.3f} SLG={stats.slg:.3f}",
+        note=note,
     )
     return score, reason
 
