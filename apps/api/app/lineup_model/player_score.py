@@ -1,11 +1,13 @@
 """Pure functions for scoring an individual hitter.
 
 Component weights (sum to 1.0):
-  season_offense  35 %
-  recent_form     30 %
-  matchup         20 %
-  position_fit    10 %
-  start_rhythm     5 %
+  season_offense  35 %  (wOBA scaled to OPS space + clamped wRC+ multiplier;
+                         falls back to the OPS/OBP/SLG formula when the
+                         advanced metrics are absent)
+  recent_form     30 %  (rolling 14/30-day OPS, season-OPS fallback)
+  matchup         20 %  (vs-LHP/RHP splits, season-OPS fallback)
+  position_fit    10 %  (primary / secondary / recent-played eligibility)
+  start_rhythm     5 %  (starts in the team's last 5 games)
 
 All functions are deterministic and free of side effects.
 """
