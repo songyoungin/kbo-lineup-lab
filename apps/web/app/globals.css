@@ -2,8 +2,11 @@
 
 /*
  * LG Twins Lineup Lab — light theme with a crimson brand accent.
- * Brand colour tokens are exposed to Tailwind v4 via @theme so components can
- * use utilities like `bg-brand-600`, `text-brand-700`, `border-brand-200`.
+ * Brand colour tokens are exposed to Tailwind v4 via a single @theme block so
+ * components can use utilities like `bg-brand-600`, `text-brand-700`,
+ * `border-brand-200`. Keep this as ONE @theme block: under Next/Turbopack a
+ * second @theme at-rule caused the whole custom theme to be dropped on a clean
+ * build (brand/canvas/font tokens silently missing).
  */
 
 @theme {
@@ -26,9 +29,8 @@
   /* App surfaces */
   --color-canvas: #f7f7f9;
   --color-surface: #ffffff;
-}
 
-@theme inline {
+  /* Fonts (Geist via next/font; the CSS vars are set on <html>) */
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
 }
