@@ -34,6 +34,8 @@ class PostgameDifferenceReview(BaseModel):
     recommended_player_id: int
     recommended_player_name: str
     actual_performance: float
+    # None when the recommended player never appeared in the box score.
+    recommended_performance: float | None
     verdict: str
     rationale: str
 
