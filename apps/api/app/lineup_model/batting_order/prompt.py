@@ -28,17 +28,36 @@ SYSTEM_PROMPT = (
 def build_user_prompt(
     assigned: dict[Position, HitterStats],
     opp_handedness: Handedness,
+    opp_pitcher: dict[str, float | None] | None = None,
 ) -> str:
     """Build the dynamic user prompt carrying each assigned player's stats.
 
     Args:
         assigned: Mapping of position to the assigned HitterStats.
         opp_handedness: Opposing starter's handedness.
+        opp_pitcher: Optional opposing-starter quality line ``{era, whip, k_pct}``;
+            k_pct is a fraction (SO/TBF) and may be None. When provided (with
+            era/whip), a Korean context line is prepended; when None the prompt
+            is byte-identical to the no-pitcher form.
 
     Returns:
         The user prompt string to send to the LLM.
     """
-    lines: list[str] = [
+    lines: list[str] = []
+    if (
+        opp_pitcher is not None
+        and opp_pitcher.get("era") is not None
+        and (opp_pitcher.get("whip") is not None)
+    ):
+        era = opp_pitcher["era"]
+        whip = opp_pitcher["whip"]
+        k_pct = opp_pitcher.get("k_pct")
+        k_part = f", K% {k_pct:.0%}" if k_pct is not None else ""
+        lines.append(
+            f"상대 선발 투수: ERA {era:.2f}, WHIP {whip:.2f}{k_part} "
+            "(참고용 매치업 난이도; 타순 결정에는 보조 정보)"
+        )
+    lines += [
         f"상대 선발 투수 손: {opp_handedness}",
         "",
         "선발 라인업 9명(점수는 결정론 엔진이 계산한 참고용 종합 점수):",

@@ -592,7 +592,13 @@ def evaluate_lineup_for_run(
     # ------------------------------------------------------------------
     assigned = select_and_assign_positions(eligible, opp_handedness)
     provider = build_provider()
-    order_result = order_batting_lineup(assigned, opp_handedness, provider)
+    # Resolve the opposing starter once: it both threads into the LLM
+    # batting-order prompt (as a matchup-difficulty hint) and calibrates the
+    # headline totals below. Missing data is a graceful no-op on both sides.
+    opponent_pitcher = _resolve_opponent_pitcher(session, run)
+    order_result = order_batting_lineup(
+        assigned, opp_handedness, provider, opp_pitcher=opponent_pitcher
+    )
     stats_by_player = {s.player_id: s for s in eligible}
     recommended = compute_lineup_score(order_result.slots, stats_by_player, opp_handedness)
 
@@ -632,7 +638,7 @@ def evaluate_lineup_for_run(
     # player selection, batting order, per-slot scores, or run.output_hash
     # (those stay based on the unmultiplied deterministic lineup). Missing
     # opponent data is a graceful no-op (mult = 1.0, no opponent_pitcher block).
-    opponent_pitcher = _resolve_opponent_pitcher(session, run)
+    # ``opponent_pitcher`` was resolved once above (reused here; not re-queried).
     if opponent_pitcher is not None:
         mult = matchup_difficulty_multiplier(
             era=opponent_pitcher["era"], whip=opponent_pitcher["whip"]

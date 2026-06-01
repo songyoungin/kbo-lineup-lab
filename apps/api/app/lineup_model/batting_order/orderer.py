@@ -36,6 +36,7 @@ def order(
     assigned: dict[Position, HitterStats],
     opp_handedness: Handedness,
     provider: BattingOrderProvider | None,
+    opp_pitcher: dict[str, float | None] | None = None,
 ) -> BattingOrderResult:
     """Decide the batting order via the LLM, falling back deterministically.
 
@@ -43,6 +44,9 @@ def order(
         assigned: Mapping of position to the assigned HitterStats (9 players).
         opp_handedness: Opposing starter's handedness.
         provider: Batting-order provider; None falls back immediately.
+        opp_pitcher: Optional opposing-starter quality line ``{era, whip, k_pct}``;
+            only influences the LLM prompt text. The deterministic fallback path
+            is unaffected.
 
     Returns:
         A BattingOrderResult with slots, per-player rationale, summary, source.
@@ -50,7 +54,7 @@ def order(
     if provider is None:
         return _fallback(assigned, opp_handedness)
 
-    user_prompt = build_user_prompt(assigned, opp_handedness)
+    user_prompt = build_user_prompt(assigned, opp_handedness, opp_pitcher)
     for attempt in range(_MAX_ATTEMPTS):
         try:
             raw = provider.complete(
