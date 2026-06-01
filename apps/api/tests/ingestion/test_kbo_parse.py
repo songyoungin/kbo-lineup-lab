@@ -62,3 +62,35 @@ def test_parse_pitcher_basic_extracts_era_whip_so_tbf() -> None:
 def test_parse_pitcher_basic_missing_returns_none() -> None:
     """Absent tables yield None so the caller can record a needs-review reason."""
     assert parse_pitcher_basic("<html></html>") is None
+
+
+def test_value_by_header_ignores_game_log_total_footer() -> None:
+    """ERA from the season table wins over a game-log 합계 header collision."""
+    html = """
+    <table>
+      <tr><th>ERA</th><th>WHIP</th><th>TBF</th></tr>
+      <tr><td>3.18</td><td>1.59</td><td>52</td></tr>
+    </table>
+    <table>
+      <tr><th>일자</th><th>합계</th><th>ERA</th></tr>
+      <tr><td>05.28</td><td></td><td>5.40</td></tr>
+    </table>
+    """
+    out = parse_pitcher_basic(html)
+    assert out is not None
+    assert out["era"] == 3.18  # season table, not the 5.40 game-log footer
+
+
+def test_value_by_header_prefers_total_row_for_traded_player() -> None:
+    """Traded-player season tables expose per-team rows + a 합계 total row."""
+    html = """
+    <table>
+      <tr><th>팀명</th><th>ERA</th><th>WHIP</th><th>TBF</th></tr>
+      <tr><td>A</td><td>4.00</td><td>1.20</td><td>30</td></tr>
+      <tr><td>B</td><td>6.00</td><td>1.80</td><td>20</td></tr>
+      <tr><td>합계</td><td>5.00</td><td>1.50</td><td>50</td></tr>
+    </table>
+    """
+    out = parse_pitcher_basic(html)
+    assert out is not None
+    assert out["era"] == 5.00  # 합계 total, not the first per-team row (4.00)

@@ -26,14 +26,26 @@ def _to_float(text: str) -> float | None:
         return None
 
 
+_GAME_LOG_DATE_LABELS = ("일자", "일시")
+_TOTAL_ROW_LABELS = frozenset({"합계", "계", ""})
+
+
 def _value_by_header(soup: BeautifulSoup, header: str) -> float | None:
-    """Return the float under ``header`` in the first data row of its table.
+    """Return the float under ``header`` in the season-total row of its table.
 
     KBO Basic pages stack the season line across several tables (a frozen
     leading column set plus scrollable sets); each such table carries its own
-    <th> header row and a single <td> data row, so the header index aligns with
-    the data cells within the same table. The header-only row is skipped
-    because it has no <td> cells. Returns None when no table exposes ``header``.
+    <th> header row and one or more <td> data rows (one per team for traded
+    players, plus a 합계 total), so the header index aligns with the data cells
+    within the same table. Two hazards are guarded:
+
+    * Header collision: the per-game log table renders a 합계 footer with <th>
+      tags, so ERA/SO/TBF also appear in its header set. Such tables are
+      skipped (header set contains "합계", or the first header is a date label).
+    * Traded players: among data rows, a 합계/계/blank-labelled total row is
+      preferred over a partial per-team row; otherwise the first data row.
+
+    Returns None when no season table exposes ``header``.
 
     Args:
         soup: Parsed Basic.aspx document.
@@ -46,11 +58,17 @@ def _value_by_header(soup: BeautifulSoup, header: str) -> float | None:
         headers = [th.get_text(strip=True) for th in table.find_all("th")]
         if header not in headers:
             continue
+        if "합계" in headers or (headers and headers[0] in _GAME_LOG_DATE_LABELS):
+            continue  # game-log table: skip to avoid header collision
         idx = headers.index(header)
-        for tr in table.find_all("tr"):
-            tds = tr.find_all("td")
-            if len(tds) > idx:
-                return _to_float(tds[idx].get_text(strip=True))
+        data_rows = [tds for tr in table.find_all("tr") if len(tds := tr.find_all("td")) > idx]
+        if not data_rows:
+            continue
+        total_row = next(
+            (r for r in data_rows if r[0].get_text(strip=True) in _TOTAL_ROW_LABELS),
+            data_rows[0],
+        )
+        return _to_float(total_row[idx].get_text(strip=True))
     return None
 
 
