@@ -316,6 +316,56 @@ def test_normalize_schedule_is_idempotent(session: Session, ingestion_run: Inges
     assert len(count) == 1
 
 
+def test_normalize_schedule_captures_and_updates_score(
+    session: Session, ingestion_run: IngestionRun
+) -> None:
+    """Schedule normalizer stores the final score/status and updates an existing game.
+
+    A scheduled game (statusCode != RESULT) stores the status but no score; a later
+    RESULT payload updates the same Game row with the final score.
+    """
+    _seed_team(session, "LG", "LG Twins")
+    _seed_team(session, "OB", "Doosan Bears")
+
+    def _payload(home_score: int, away_score: int, status: str) -> str:
+        return json.dumps(
+            {
+                "result": {
+                    "games": [
+                        {
+                            "gameId": "20260415OBLG02026",
+                            "gameDate": "2026-04-15",
+                            "homeTeamCode": "LG",
+                            "awayTeamCode": "OB",
+                            "stadium": "Jamsil",
+                            "homeTeamScore": home_score,
+                            "awayTeamScore": away_score,
+                            "statusCode": status,
+                        }
+                    ]
+                }
+            }
+        )
+
+    # First ingest: scheduled, not final → status stored, score still null.
+    raw1 = _make_raw_payload(session, ingestion_run, _payload(0, 0, "BEFORE"), category="schedule")
+    normalize_schedule(session, raw1)
+    game = session.execute(select(Game).where(Game.external_id == "20260415OBLG0")).scalar_one()
+    assert game.status == "BEFORE"
+    assert game.home_score is None
+    assert game.away_score is None
+
+    # Second ingest: final result updates the existing row.
+    raw2 = _make_raw_payload(session, ingestion_run, _payload(5, 3, "RESULT"), category="schedule")
+    result = normalize_schedule(session, raw2)
+    assert result.games_existing == 1
+    assert result.games_created == 0
+    # normalize_schedule mutates the existing Game in-place (caller commits).
+    assert game.status == "RESULT"
+    assert game.home_score == 5
+    assert game.away_score == 3
+
+
 def test_normalize_schedule_html_raises_not_implemented(
     session: Session, ingestion_run: IngestionRun
 ) -> None:
@@ -571,23 +621,21 @@ def _make_record_body(
     away_batters: list[dict[str, object]],
     gdate: int = 20260415,
     gtime: str = "18:30",
+    pitching_result: list[dict[str, object]] | None = None,
 ) -> str:
     """Build a minimal Naver record body for box_score normalizer tests."""
-    return json.dumps(
-        {
-            "result": {
-                "recordData": {
-                    "gameInfo": {
-                        "gdate": gdate,
-                        "gtime": gtime,
-                        "hCode": home_code,
-                        "aCode": away_code,
-                    },
-                    "battersBoxscore": {"home": home_batters, "away": away_batters},
-                }
-            }
-        }
-    )
+    record_data: dict[str, object] = {
+        "gameInfo": {
+            "gdate": gdate,
+            "gtime": gtime,
+            "hCode": home_code,
+            "aCode": away_code,
+        },
+        "battersBoxscore": {"home": home_batters, "away": away_batters},
+    }
+    if pitching_result is not None:
+        record_data["pitchingResult"] = pitching_result
+    return json.dumps({"result": {"recordData": record_data}})
 
 
 _SAMPLE_BOX_BATTER = {
@@ -664,6 +712,40 @@ def test_normalize_box_score_creates_snapshot_and_rows(
     assert hitter_row.extra_stats_json is not None
     assert hitter_row.extra_stats_json["hr"] == 0
     assert hitter_row.extra_stats_json["bb"] == 1
+
+
+def test_normalize_box_score_records_pitcher_decisions(
+    session: Session, ingestion_run: IngestionRun
+) -> None:
+    """recordData.pitchingResult의 승/패/세이브 투수를 Game에 기록해야 한다.
+
+    pitchingResult의 각 항목은 wls(W/L/S)와 이름을 가지며, 상대팀 투수일 수 있어
+    이름 문자열로 Game에 저장된다.
+    """
+    lg = _seed_team(session, "LG", "LG 트윈스")
+    doo = _seed_team(session, "DOO", "두산 베어스")
+    game = _seed_game(session, home_team=lg, away_team=doo, external_id=_RECORD_GAME_ID)
+
+    body = _make_record_body(
+        home_code="LG",
+        away_code="DO",
+        home_batters=[dict(_SAMPLE_BOX_BATTER)],
+        away_batters=[],
+        pitching_result=[
+            {"name": "송승기", "wls": "W", "pCode": "51111"},
+            {"name": "로젠버그", "wls": "L", "pCode": "55322"},
+            {"name": "고우석", "wls": "S", "pCode": "99999"},
+        ],
+    )
+    raw = _make_raw_payload(
+        session, ingestion_run, body, category="box_score", source_url=_RECORD_SOURCE_URL
+    )
+
+    normalize_box_score(session, raw)
+
+    assert game.winning_pitcher_name == "송승기"
+    assert game.losing_pitcher_name == "로젠버그"
+    assert game.save_pitcher_name == "고우석"
 
 
 def test_normalize_box_score_is_idempotent(session: Session, ingestion_run: IngestionRun) -> None:

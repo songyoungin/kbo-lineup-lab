@@ -17,6 +17,12 @@ export const MOCK_TEAM_HOME: TeamHomeResponse = {
       stats: "ok",
       evaluation: "pending",
     },
+    team_score: null,
+    opponent_score: null,
+    status: "BEFORE",
+    winning_pitcher_name: null,
+    losing_pitcher_name: null,
+    save_pitcher_name: null,
   },
   recent: [
     {

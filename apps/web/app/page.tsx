@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { ApiError, api } from "@/lib/api";
 import { MOCK_TEAM_HOME } from "@/lib/mock";
-import type { TeamHomeResponse } from "@/lib/types";
+import type { TeamHomeGameCard, TeamHomeResponse } from "@/lib/types";
 import { ScoreCard } from "@/components/score-card";
 import { StatusPill } from "@/components/status-pill";
 import { DataTable, type Column } from "@/components/data-table";
@@ -18,6 +18,34 @@ import {
 /** pipeline_status 값을 한국어로. 미등록 값(레거시 mock 등)은 원문을 반환. */
 function pipelineStatusKo(status: string): string {
   return ADMIN_STATUS_KO[status as AdminCategoryStatus] ?? status;
+}
+
+/** True once the game has a final score. */
+function isPlayed(t: TeamHomeGameCard): boolean {
+  return (
+    t.status === "RESULT" && t.team_score != null && t.opponent_score != null
+  );
+}
+
+/** "승"/"패"/"무" from LG's perspective, or null when not yet played. */
+function resultTag(
+  t: TeamHomeGameCard
+): { label: string; won: boolean } | null {
+  if (!isPlayed(t)) return null;
+  const team = t.team_score as number;
+  const opp = t.opponent_score as number;
+  if (team > opp) return { label: "승", won: true };
+  if (team < opp) return { label: "패", won: false };
+  return { label: "무", won: false };
+}
+
+/** "승리 X · 패전 Y · 세이브 Z" line, or null when no decisions are known. */
+function pitcherLine(t: TeamHomeGameCard): string | null {
+  const parts: string[] = [];
+  if (t.winning_pitcher_name) parts.push(`승리 ${t.winning_pitcher_name}`);
+  if (t.losing_pitcher_name) parts.push(`패전 ${t.losing_pitcher_name}`);
+  if (t.save_pitcher_name) parts.push(`세이브 ${t.save_pitcher_name}`);
+  return parts.length > 0 ? parts.join(" · ") : null;
 }
 
 // Map pipeline status value → tone.
@@ -110,19 +138,45 @@ export default async function TeamHomePage() {
             {/* Crimson matchup banner */}
             <div className="flex items-center justify-between gap-4 bg-gradient-to-r from-brand-700 to-brand-600 px-6 py-5 text-white">
               <div>
-                <p className="text-2xl font-extrabold tracking-tight">
-                  {teamNameKo(home.team_code)}{" "}
-                  <span className="text-brand-200">vs</span>{" "}
-                  {teamNameKo(today.opponent_team_code)}
-                </p>
+                <div className="flex items-center gap-2.5">
+                  <p className="text-2xl font-extrabold tracking-tight">
+                    {teamNameKo(home.team_code)}{" "}
+                    {isPlayed(today) ? (
+                      <span className="tabular-nums">
+                        {today.team_score}
+                        <span className="px-1.5 text-brand-200">:</span>
+                        {today.opponent_score}
+                      </span>
+                    ) : (
+                      <span className="text-brand-200">vs</span>
+                    )}{" "}
+                    {teamNameKo(today.opponent_team_code)}
+                  </p>
+                  {resultTag(today) && (
+                    <span
+                      className={`rounded-md px-2 py-0.5 text-sm font-bold ${
+                        resultTag(today)!.won
+                          ? "bg-white text-brand-700"
+                          : "bg-white/20 text-white"
+                      }`}
+                    >
+                      {resultTag(today)!.label}
+                    </span>
+                  )}
+                </div>
                 <p className="mt-1 text-xs font-medium text-brand-100">
                   {today.game_date}
                   {today.venue && ` · ${today.venue}`}
                   {today.opponent_starter &&
                     ` · 상대 선발: ${today.opponent_starter}`}
                 </p>
+                {pitcherLine(today) && (
+                  <p className="mt-1 text-xs font-medium text-brand-100/90">
+                    {pitcherLine(today)}
+                  </p>
+                )}
               </div>
-              <span className="rounded-full bg-white/15 px-3 py-1 text-xs font-semibold backdrop-blur">
+              <span className="shrink-0 self-start rounded-full bg-white/15 px-3 py-1 text-xs font-semibold backdrop-blur">
                 Game #{today.game_id}
               </span>
             </div>

@@ -46,6 +46,13 @@ export interface TeamHomeGameCard {
   venue: string | null;
   opponent_starter: string | null;
   pipeline_status: Record<string, string>;
+  // Final score from LG's perspective; null until the game is played.
+  team_score: number | null;
+  opponent_score: number | null;
+  status: string | null; // schedule statusCode, e.g. "RESULT"
+  winning_pitcher_name: string | null;
+  losing_pitcher_name: string | null;
+  save_pitcher_name: string | null;
 }
 
 export interface TeamHomeResponse {

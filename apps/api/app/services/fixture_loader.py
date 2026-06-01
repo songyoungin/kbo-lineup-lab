@@ -135,6 +135,12 @@ def _upsert_game(
         away_team_id=team_id_by_code[game.away_team_code],
         game_date=game.game_date,
         venue=game.venue,
+        home_score=game.home_score,
+        away_score=game.away_score,
+        status=game.status,
+        winning_pitcher_name=game.winning_pitcher_name,
+        losing_pitcher_name=game.losing_pitcher_name,
+        save_pitcher_name=game.save_pitcher_name,
     )
     session.add(new_game)
     session.flush()
