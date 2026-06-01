@@ -24,7 +24,13 @@
     "game_date": "2026-04-15",
     "home_team_code": "LG",
     "away_team_code": "DOO",
-    "venue": "Jamsil Baseball Stadium"
+    "venue": "Jamsil Baseball Stadium",
+    "home_score": 6,
+    "away_score": 3,
+    "status": "RESULT",
+    "winning_pitcher_name": "Im Chankyu",
+    "losing_pitcher_name": "Kwak Bin",
+    "save_pitcher_name": "Yu Yeongchan"
   },
   "ingestion": {
     "source": "fixture:lg_2026_sample",

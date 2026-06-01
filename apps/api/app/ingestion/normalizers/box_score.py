@@ -26,9 +26,40 @@ from app.ingestion.normalizers._shared import (
     resolve_game_from_naver_url,
     to_position,
 )
+from app.models.game import Game
 from app.models.player import Player
 from app.models.snapshot import BoxScoreRow, BoxScoreSnapshot, RawIngestionPayload
 from app.models.team import Team
+
+# Naver pitchingResult.wls code -> Game pitcher-decision column.
+_PITCHER_DECISION_FIELD: Final[dict[str, str]] = {
+    "W": "winning_pitcher_name",
+    "승": "winning_pitcher_name",
+    "L": "losing_pitcher_name",
+    "패": "losing_pitcher_name",
+    "S": "save_pitcher_name",
+    "세": "save_pitcher_name",
+}
+
+
+def _apply_pitcher_decisions(game: Game, record: dict[str, object]) -> None:
+    """Record winning/losing/save pitcher names from recordData.pitchingResult.
+
+    Each entry carries a ``wls`` code (W/L/S) and a name. Pitchers may belong to
+    the opponent, so they are stored as names on the Game rather than as FKs.
+    """
+    results = record.get("pitchingResult")
+    if not isinstance(results, list):
+        return
+    for item in results:
+        if not isinstance(item, dict):
+            continue
+        wls = item.get("wls")
+        name = item.get("name")
+        field = _PITCHER_DECISION_FIELD.get(str(wls)) if wls is not None else None
+        if field is not None and name:
+            setattr(game, field, str(name))
+
 
 __all__ = ["BoxScoreNormalizeResult", "normalize_box_score"]
 
@@ -128,6 +159,7 @@ def normalize_box_score(
         )
 
     game = resolve_game_from_naver_url(session, raw_payload.source_url)
+    _apply_pitcher_decisions(game, record)
     taken_at = parse_game_datetime_kst(game_info)
     content_hash = compute_content_hash(lg_batters)
 

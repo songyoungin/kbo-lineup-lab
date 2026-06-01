@@ -33,6 +33,21 @@ class ScheduleNormalizeResult:
     needs_review_reasons: tuple[str, ...]
 
 
+def _apply_score_status(game: Game, entry: dict[str, object]) -> None:
+    """Set status and, for a finished game (statusCode RESULT), the final score.
+
+    A scheduled/in-progress game keeps a null score; only a RESULT payload
+    writes home/away scores so a pre-game 0 is never mistaken for a final 0-0.
+    """
+    status = entry.get("statusCode")
+    game.status = str(status) if status is not None else None
+    if status == "RESULT":
+        home_score = entry.get("homeTeamScore")
+        away_score = entry.get("awayTeamScore")
+        game.home_score = home_score if isinstance(home_score, int) else None
+        game.away_score = away_score if isinstance(away_score, int) else None
+
+
 def normalize_schedule(
     session: Session,
     raw_payload: RawIngestionPayload,
@@ -113,6 +128,9 @@ def normalize_schedule(
             select(Game).where(Game.external_id == external_id)
         ).scalar_one_or_none()
         if existing is not None:
+            # Refresh score/status: a game first appears as scheduled, then a
+            # later ingest carries the final result for the same Game row.
+            _apply_score_status(existing, entry)
             games_existing += 1
             continue
 
@@ -129,15 +147,15 @@ def normalize_schedule(
             needs_review_reasons.append(f"game {external_id!r}: bad gameDate={game_date_str!r}")
             continue
 
-        session.add(
-            Game(
-                external_id=external_id,
-                home_team_id=home_team.id,
-                away_team_id=away_team.id,
-                game_date=parsed_date,
-                venue=entry.get("stadium"),
-            )
+        new_game = Game(
+            external_id=external_id,
+            home_team_id=home_team.id,
+            away_team_id=away_team.id,
+            game_date=parsed_date,
+            venue=entry.get("stadium"),
         )
+        _apply_score_status(new_game, entry)
+        session.add(new_game)
         session.flush()
         games_created += 1
 

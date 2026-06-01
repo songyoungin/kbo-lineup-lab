@@ -295,6 +295,10 @@ def build_team_home(session: Session, team_code: str) -> TeamHomeResponse:
             ),
         }
 
+        # Score is stored home/away; expose it from LG's perspective.
+        team_score = game.home_score if is_home else game.away_score
+        opponent_score = game.away_score if is_home else game.home_score
+
         today_card = TeamHomeGameCard(
             game_id=game.id,
             game_date=game.game_date,
@@ -303,6 +307,12 @@ def build_team_home(session: Session, team_code: str) -> TeamHomeResponse:
             # Opponent starter is not seeded in the fixture; always None for MVP
             opponent_starter=None,
             pipeline_status=pipeline_status,
+            team_score=team_score,
+            opponent_score=opponent_score,
+            status=game.status,
+            winning_pitcher_name=game.winning_pitcher_name,
+            losing_pitcher_name=game.losing_pitcher_name,
+            save_pitcher_name=game.save_pitcher_name,
         )
 
     # Earlier games (everything after the most-recent one) become "recent".

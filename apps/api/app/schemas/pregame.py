@@ -88,6 +88,15 @@ class TeamHomeGameCard(BaseModel):
     opponent_starter: str | None
     # Pipeline step → status string, e.g. {"schedule": "ok", "lineup": "missing"}
     pipeline_status: dict[str, str]
+    # Final score from LG's perspective; None until the game is played (RESULT).
+    team_score: int | None = None
+    opponent_score: int | None = None
+    # Game status mirrors the schedule statusCode (e.g. "RESULT", "BEFORE").
+    status: str | None = None
+    # Pitcher decisions (names; may be opponent pitchers). None until played.
+    winning_pitcher_name: str | None = None
+    losing_pitcher_name: str | None = None
+    save_pitcher_name: str | None = None
 
 
 class TeamHomeResponse(BaseModel):

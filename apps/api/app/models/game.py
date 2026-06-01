@@ -26,6 +26,21 @@ class Game(Base):
     game_date: Mapped[date] = mapped_column(Date, nullable=False)
     # Stadium where the game is played
     venue: Mapped[str | None] = mapped_column(String(64), nullable=True)
+
+    # Final score and status (populated once the game is played). null while the
+    # game is scheduled/in-progress. status mirrors the Naver schedule statusCode
+    # (e.g. "BEFORE", "RESULT", "CANCEL").
+    home_score: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    away_score: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    status: Mapped[str | None] = mapped_column(String(16), nullable=True)
+
+    # Pitcher decisions for the completed game. Stored as names (not FKs):
+    # the winning/losing/save pitcher may belong to the opponent and need not
+    # exist as a Player row in this single-team-focused schema.
+    winning_pitcher_name: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    losing_pitcher_name: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    save_pitcher_name: Mapped[str | None] = mapped_column(String(64), nullable=True)
+
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         default=lambda: datetime.now(UTC),

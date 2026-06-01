@@ -39,6 +39,12 @@ class GameFixture(BaseModel):
     home_team_code: str
     away_team_code: str
     venue: str | None = None
+    home_score: int | None = None
+    away_score: int | None = None
+    status: str | None = None
+    winning_pitcher_name: str | None = None
+    losing_pitcher_name: str | None = None
+    save_pitcher_name: str | None = None
 
 
 class IngestionFixture(BaseModel):
