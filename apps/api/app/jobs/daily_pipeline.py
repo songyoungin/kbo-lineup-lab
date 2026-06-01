@@ -13,11 +13,17 @@ from sqlalchemy.orm import Session
 
 from app.db.session import SessionLocal
 from app.ingestion.collectors.box_score import BoxScoreStatus, collect_lg_box_score
+from app.ingestion.collectors.kbo_official import (
+    collect_kbo_hitter_basic,
+    collect_kbo_hitter_situation,
+    collect_kbo_pitcher_basic,
+)
 from app.ingestion.collectors.lineup import LineupStatus, collect_lg_lineup
 from app.ingestion.collectors.schedule import collect_lg_schedule
 from app.ingestion.collectors.season_stats import collect_player_season_stats
 from app.ingestion.http_client import HttpClient
 from app.ingestion.normalizers.box_score import normalize_box_score
+from app.ingestion.normalizers.kbo_splits import normalize_kbo_hitter_splits
 from app.ingestion.normalizers.lineup import normalize_lineup
 from app.ingestion.normalizers.player_stats import normalize_player_stats
 from app.ingestion.normalizers.schedule import normalize_schedule
@@ -124,6 +130,69 @@ def _collect_roster_player_season_stats(
     return count
 
 
+def _collect_and_normalize_kbo(
+    session: Session,
+    *,
+    ingestion_run: IngestionRun,
+    game: Game,
+    team_id: int,
+    snapshot_id: int,
+    http: HttpClient,
+) -> None:
+    """Best-effort KBO-official enrichment of an existing stat snapshot.
+
+    Collects each rostered hitter's KBO situational-splits and basic-record
+    pages and (once per game) the announced opponent starter's pitcher page,
+    then merges the parsed vs-L/R splits and RISP into the snapshot's existing
+    rows via :func:`normalize_kbo_hitter_splits`.
+
+    This is purely additive: the whole body is wrapped so that ANY KBO failure
+    (outage, HTTP error, parse failure) is logged and swallowed. It must never
+    fail the daily pipeline or alter the Naver-based snapshot, which is already
+    persisted in the session by the time this runs.
+
+    Args:
+        session: Active SQLAlchemy session. Caller controls the transaction.
+        ingestion_run: Parent ingestion run the fetched payloads belong to.
+        game: The game being processed; its ``opponent_starter_id`` selects the
+            opposing starter's pitcher page (when set).
+        team_id: Team whose hitters to enrich (same set as the season-stats loop).
+        snapshot_id: StatSnapshot whose rows are enriched.
+        http: Configured HttpClient. Inject a mock client in tests.
+    """
+    try:
+        codes = session.execute(
+            select(Player.external_id).where(
+                Player.team_id == team_id,
+                Player.position != Position.P.value,
+            )
+        ).scalars()
+        for code in codes:
+            collect_kbo_hitter_situation(
+                session=session, ingestion_run=ingestion_run, player_code=code, http=http
+            )
+            collect_kbo_hitter_basic(
+                session=session, ingestion_run=ingestion_run, player_code=code, http=http
+            )
+        if game.opponent_starter_id is not None:
+            collect_kbo_pitcher_basic(
+                session=session,
+                ingestion_run=ingestion_run,
+                player_code=game.opponent_starter_id,
+                http=http,
+            )
+        normalize_kbo_hitter_splits(
+            session, ingestion_run_id=ingestion_run.id, snapshot_id=snapshot_id
+        )
+    except Exception:
+        logger.warning(
+            "KBO enrichment skipped for game %s (snapshot %s); continuing with Naver-only stats",
+            game.external_id,
+            snapshot_id,
+            exc_info=True,
+        )
+
+
 def run_daily_pipeline(
     *,
     target_date: date,
@@ -228,6 +297,18 @@ def run_daily_pipeline(
                     )
                     if ps.rows_created > 0:
                         stat_snapshots_created += 1
+                    # Additive KBO-official enrichment of the just-built snapshot:
+                    # vs-L/R splits, RISP, and the opponent-pitcher page. Any KBO
+                    # failure is swallowed inside the helper so the Naver path and
+                    # pipeline status are unaffected.
+                    _collect_and_normalize_kbo(
+                        session,
+                        ingestion_run=run,
+                        game=game,
+                        team_id=lineup_snapshot.team_id,
+                        snapshot_id=ps.snapshot_id,
+                        http=http_client,
+                    )
 
                 box_result = collect_lg_box_score(
                     session=session,
