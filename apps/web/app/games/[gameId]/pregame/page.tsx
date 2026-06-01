@@ -56,6 +56,22 @@ export default async function PregamePage({
             프리게임 평가
           </h1>
           <p className="mt-1 text-sm text-zinc-500">Game #{gameId}</p>
+          {pregame.opponent_pitcher && (
+            <p className="mt-1 text-sm text-zinc-500">
+              상대 선발: ERA{" "}
+              {pregame.opponent_pitcher.era != null
+                ? pregame.opponent_pitcher.era.toFixed(2)
+                : "-"}{" "}
+              · WHIP{" "}
+              {pregame.opponent_pitcher.whip != null
+                ? pregame.opponent_pitcher.whip.toFixed(2)
+                : "-"}{" "}
+              · K%{" "}
+              {pregame.opponent_pitcher.k_pct != null
+                ? `${(pregame.opponent_pitcher.k_pct * 100).toFixed(0)}%`
+                : "-"}
+            </p>
+          )}
         </div>
         <Link
           href={`/games/${gameId}/postgame`}

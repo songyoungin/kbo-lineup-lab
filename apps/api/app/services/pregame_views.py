@@ -28,6 +28,7 @@ from app.schemas.pregame import (
     LineupComparisonRow,
     LineupDifference,
     LineupRow,
+    OpponentPitcher,
     PlayerComparisonResponse,
     PlayerComparisonStats,
     PregameResponse,
@@ -521,6 +522,25 @@ def build_pregame_view(
     # actual lineup is scored with synthesised position eligibility.
     model_limitations.append(ACTUAL_SCORE_METHOD_NOTE)
 
+    # Map the opponent-starter quality block when the evaluator persisted one.
+    # k_pct is stored as a FRACTION; era/whip may be null while multiplier is
+    # always a float (defaults to 1.0 when no pitcher data was found).
+    opponent_pitcher: OpponentPitcher | None = None
+    opp_block = insights.get("opponent_pitcher")
+    if isinstance(opp_block, dict):
+
+        def _opt_num(key: str) -> float | None:
+            v = opp_block.get(key)
+            return float(v) if isinstance(v, (int, float)) else None
+
+        _mult = opp_block.get("multiplier")
+        opponent_pitcher = OpponentPitcher(
+            era=_opt_num("era"),
+            whip=_opt_num("whip"),
+            k_pct=_opt_num("k_pct"),
+            multiplier=float(_mult) if isinstance(_mult, (int, float)) else 1.0,
+        )
+
     return PregameResponse(
         game_id=game_id,
         actual_score=actual_score,
@@ -531,6 +551,7 @@ def build_pregame_view(
         recommended_lineup=recommended_lineup,
         differences=differences,
         model_limitations=model_limitations,
+        opponent_pitcher=opponent_pitcher,
     )
 
 
@@ -799,6 +820,7 @@ def build_player_comparison(
             slg=_f("SLG"),
             recent_14d_ops=_opt_f("recent_14d_ops"),
             recent_30d_ops=_opt_f("recent_30d_ops"),
+            risp_avg=_opt_f("risp_avg"),
             vs_rhp_ops=_opt_f("vs_rhp_ops"),
             vs_lhp_ops=_opt_f("vs_lhp_ops"),
             pa_vs_rhp=_i("vs_rhp_pa"),

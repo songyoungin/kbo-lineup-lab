@@ -136,6 +136,21 @@ class LineupDifference(BaseModel):
     main_reason: str
 
 
+class OpponentPitcher(BaseModel):
+    """Opponent starting pitcher quality block from key_insights_json.
+
+    k_pct is a FRACTION (so/tbf, e.g. 0.269), not a percentage; multiplier is the
+    matchup-difficulty scaling applied to both headline totals.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    era: float | None
+    whip: float | None
+    k_pct: float | None
+    multiplier: float
+
+
 class PregameResponse(BaseModel):
     """Response for GET /api/games/{game_id}/pregame."""
 
@@ -152,6 +167,8 @@ class PregameResponse(BaseModel):
     differences: list[LineupDifference]
     # Limitations extracted from key_insights_json (e.g. opp_handedness_default note)
     model_limitations: list[str]
+    # Opponent starter quality; None when no pitcher data was resolved for the run.
+    opponent_pitcher: OpponentPitcher | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -215,6 +232,8 @@ class PlayerComparisonStats(BaseModel):
     # Handedness splits
     vs_rhp_ops: float | None
     vs_lhp_ops: float | None
+    # Recent runners-in-scoring-position average (None when not present in fixture)
+    risp_avg: float | None
     # Playing time indicators
     pa_vs_rhp: int
     pa_vs_lhp: int
