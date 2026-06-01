@@ -6,7 +6,8 @@ const BORDER_CLASSES: Record<string, string> = {
   neutral: "border-zinc-200",
   good: "border-emerald-200",
   warning: "border-amber-300",
-  danger: "border-red-300",
+  danger: "border-rose-300",
+  brand: "border-brand-200",
 };
 
 export function DifferenceCard({
@@ -24,11 +25,14 @@ export function DifferenceCard({
 
   return (
     <div
-      className={cn("rounded-md border bg-white p-4 space-y-2", borderClass)}
+      className={cn(
+        "space-y-2 rounded-xl border bg-surface p-4 shadow-sm",
+        borderClass
+      )}
     >
       {/* 상단: 타순 배지 + 차이 유형 */}
       <div className="flex items-center gap-2">
-        <span className="inline-flex items-center justify-center w-6 h-6 rounded-full bg-zinc-100 text-xs font-bold text-zinc-600">
+        <span className="inline-flex h-6 w-6 items-center justify-center rounded-full bg-brand-50 text-xs font-bold text-brand-700">
           {difference.batting_order}
         </span>
         <span className="text-xs font-medium text-zinc-500">

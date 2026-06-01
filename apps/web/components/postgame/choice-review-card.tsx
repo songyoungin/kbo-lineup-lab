@@ -33,7 +33,8 @@ const BORDER_TONE: Record<StatusTone, string> = {
   neutral: "border-zinc-200",
   good: "border-emerald-200",
   warning: "border-amber-300",
-  danger: "border-red-300",
+  danger: "border-rose-300",
+  brand: "border-brand-200",
 };
 
 /**
@@ -51,14 +52,14 @@ export function ChoiceReviewCard({
   return (
     <div
       className={cn(
-        "rounded-md border bg-white p-4 space-y-3",
+        "space-y-3 rounded-xl border bg-surface p-4 shadow-sm",
         BORDER_TONE[tone]
       )}
     >
       {/* 상단: 타순 배지 + verdict 필 */}
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
-          <span className="inline-flex items-center justify-center w-6 h-6 rounded-full bg-zinc-100 text-xs font-bold text-zinc-600">
+          <span className="inline-flex h-6 w-6 items-center justify-center rounded-full bg-brand-50 text-xs font-bold text-brand-700">
             {review.batting_order}
           </span>
           <span className="text-xs text-zinc-400">번타자</span>

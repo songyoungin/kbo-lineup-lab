@@ -1,26 +1,45 @@
 @import "tailwindcss";
 
-:root {
-  --background: #ffffff;
-  --foreground: #171717;
+/*
+ * LG Twins Lineup Lab — light theme with a crimson brand accent.
+ * Brand colour tokens are exposed to Tailwind v4 via @theme so components can
+ * use utilities like `bg-brand-600`, `text-brand-700`, `border-brand-200`.
+ */
+
+@theme {
+  /* LG Twins crimson (brand-600 ≈ #C30452) */
+  --color-brand-50: #fff1f6;
+  --color-brand-100: #ffe3ed;
+  --color-brand-200: #fecddf;
+  --color-brand-300: #fda4c2;
+  --color-brand-400: #fa6f9f;
+  --color-brand-500: #ef3d79;
+  --color-brand-600: #c30452;
+  --color-brand-700: #a30446;
+  --color-brand-800: #87083d;
+  --color-brand-900: #730c37;
+  --color-brand-950: #45011c;
+
+  /* Ink — near-black navy for headings/body, crisper than zinc-900 */
+  --color-ink: #15161b;
+
+  /* App surfaces */
+  --color-canvas: #f7f7f9;
+  --color-surface: #ffffff;
 }
 
 @theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+:root {
+  --background: var(--color-canvas);
+  --foreground: var(--color-ink);
 }
 
 body {
   background: var(--background);
   color: var(--foreground);
-  @apply text-zinc-900 antialiased;
+  @apply antialiased;
 }

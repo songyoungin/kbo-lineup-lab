@@ -24,15 +24,15 @@ export function DataTable<Row>({
   keyFn?: (row: Row, index: number) => string | number;
 }) {
   return (
-    <div className="overflow-x-auto rounded-md border border-zinc-200">
-      <table className="w-full text-sm text-left">
-        <thead className="bg-zinc-50 border-b border-zinc-200">
+    <div className="overflow-x-auto rounded-xl border border-zinc-200/80 bg-surface shadow-sm">
+      <table className="w-full text-left text-sm">
+        <thead className="border-b border-zinc-200 bg-zinc-50/80">
           <tr>
             {columns.map((col) => (
               <th
                 key={col.header}
                 className={cn(
-                  "px-3 py-2 text-xs font-semibold uppercase tracking-wide text-zinc-500",
+                  "px-4 py-2.5 text-[11px] font-semibold uppercase tracking-wider text-zinc-500",
                   ALIGN_CLASSES[col.align ?? "left"]
                 )}
               >
@@ -41,12 +41,12 @@ export function DataTable<Row>({
             ))}
           </tr>
         </thead>
-        <tbody className="divide-y divide-zinc-100 bg-white">
+        <tbody className="divide-y divide-zinc-100">
           {rows.length === 0 ? (
             <tr>
               <td
                 colSpan={columns.length}
-                className="px-3 py-6 text-center text-xs text-zinc-400"
+                className="px-4 py-8 text-center text-xs text-zinc-400"
               >
                 {emptyMessage}
               </td>
@@ -55,13 +55,13 @@ export function DataTable<Row>({
             rows.map((row, i) => (
               <tr
                 key={keyFn ? keyFn(row, i) : i}
-                className="hover:bg-zinc-50 transition-colors"
+                className="transition-colors hover:bg-brand-50/40"
               >
                 {columns.map((col) => (
                   <td
                     key={col.header}
                     className={cn(
-                      "px-3 py-2 text-zinc-700",
+                      "px-4 py-2.5 text-zinc-700",
                       ALIGN_CLASSES[col.align ?? "left"]
                     )}
                   >
