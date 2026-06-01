@@ -31,6 +31,7 @@ from app.schemas.pregame import (
     PlayerComparisonResponse,
     PlayerComparisonStats,
     PregameResponse,
+    RecentGameSummary,
     ReplayEvaluationRequest,
     ReplayEvaluationResponse,
     TeamHomeGameCard,
@@ -94,6 +95,37 @@ def _latest_completed_run(
         .scalars()
         .first()
     )
+
+
+def _recent_game_verdict(session: Session, game_id: int, team_id: int) -> str | None:
+    """Return the lineup verdict for a past game, or None when unavailable.
+
+    The verdict mirrors build_pregame_view: derive_verdict(actual - recommended),
+    where both totals come from the latest completed evaluation run's summary.
+    Returns None when no completed run exists or the summary lacks both totals.
+    """
+    run = _latest_completed_run(session, game_id, team_id)
+    if run is None:
+        return None
+    summary = (
+        session.execute(
+            select(LineupEvaluationSummary).where(
+                LineupEvaluationSummary.evaluation_run_id == run.id
+            )
+        )
+        .scalars()
+        .first()
+    )
+    insights = (
+        summary.key_insights_json
+        if summary is not None and summary.key_insights_json is not None
+        else {}
+    )
+    recommended = insights.get("recommended_total_score")
+    actual = insights.get("actual_total_score")
+    if not isinstance(recommended, (int, float)) or not isinstance(actual, (int, float)):
+        return None
+    return derive_verdict(float(actual) - float(recommended))
 
 
 def _box_score_exists(session: Session, game_id: int) -> bool:
@@ -180,13 +212,16 @@ def _player_names_bulk(session: Session, player_ids: list[int]) -> dict[int, str
 # Team home view
 # ---------------------------------------------------------------------------
 
+# Number of past games surfaced under "recent" on the team home page.
+_RECENT_GAME_LIMIT = 10
+
 
 def build_team_home(session: Session, team_code: str) -> TeamHomeResponse:
     """Assemble the team home page payload for the given team.
 
-    For MVP with fixture data:
-    - "today" is the single game present in the fixture.
-    - "recent" is an empty list (no historical game records yet).
+    - "today" is the team's most recent game (home or away).
+    - "recent" is the team's earlier games (most-recent-first, excluding today),
+      each carrying its lineup verdict when a completed evaluation run exists.
     - Pipeline status reuses the canonical per-category vocabulary from
       build_game_ingestion_status, overlaid with artifact presence so directly-seeded
       data (no pipeline run) reads as complete/normalized rather than waiting.
@@ -203,17 +238,19 @@ def build_team_home(session: Session, team_code: str) -> TeamHomeResponse:
     """
     team_id = _lookup_team_id(session, team_code)
 
-    # Find the most recent game for this team (home or away)
-    game = (
+    # Fetch the team's games most-recent-first: the first is "today", the rest
+    # (bounded by _RECENT_GAME_LIMIT) populate "recent".
+    games = list(
         session.execute(
             select(Game)
             .where((Game.home_team_id == team_id) | (Game.away_team_id == team_id))
-            .order_by(Game.game_date.desc())
-            .limit(1)
+            .order_by(Game.game_date.desc(), Game.id.desc())
+            .limit(_RECENT_GAME_LIMIT + 1)
         )
         .scalars()
-        .first()
+        .all()
     )
+    game = games[0] if games else None
 
     today_card: TeamHomeGameCard | None = None
     if game is not None:
@@ -268,10 +305,25 @@ def build_team_home(session: Session, team_code: str) -> TeamHomeResponse:
             pipeline_status=pipeline_status,
         )
 
+    # Earlier games (everything after the most-recent one) become "recent".
+    recent: list[RecentGameSummary] = []
+    for past in games[1:]:
+        past_is_home = past.home_team_id == team_id
+        past_opp_id = past.away_team_id if past_is_home else past.home_team_id
+        past_opp = session.get(Team, past_opp_id)
+        recent.append(
+            RecentGameSummary(
+                game_id=past.id,
+                game_date=past.game_date,
+                opponent_team_code=past_opp.code if past_opp is not None else "???",
+                verdict=_recent_game_verdict(session, past.id, team_id),
+            )
+        )
+
     return TeamHomeResponse(
         team_code=team_code,
         today=today_card,
-        recent=[],  # No historical game records for MVP
+        recent=recent,
     )
 
 
