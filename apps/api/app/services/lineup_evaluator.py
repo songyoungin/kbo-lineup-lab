@@ -217,6 +217,31 @@ def compute_actual_lineup_score(
         r.player_id: r.stats_json for r in stat_rows
     }
 
+    # Build base stats for every actual-lineup player, then enrich with the same
+    # lineup history used for the recommended candidates so both sides of the
+    # recommended-vs-actual comparison are scored symmetrically (otherwise the
+    # actual players would keep starts_last_5_games=0, pinning start_rhythm to
+    # its 0.60 floor and systematically under-scoring the actual lineup). The
+    # current game is excluded so it cannot count toward its own history.
+    recent_lineups = _load_recent_lineups(
+        session, run.team_id, run.evaluation_cutoff_at, exclude_game_id=run.game_id
+    )
+    base_stats_by_player: dict[int, HitterStats] = {}
+    for row in actual_rows:
+        if row.batting_order is None:
+            continue
+        if row.player_id in base_stats_by_player:
+            continue
+        player = session.get(Player, row.player_id)
+        player_pos = player.position if player is not None else None
+        base_stats_by_player[row.player_id] = build_hitter_stats(
+            row.player_id, stats_json_by_player.get(row.player_id, {}), player_pos
+        )
+    enriched_stats = _enrich_with_lineup_history(
+        list(base_stats_by_player.values()), recent_lineups
+    )
+    enriched_by_player = {stats.player_id: stats for stats in enriched_stats}
+
     slots: list[LineupSlot] = []
     stats_by_player: dict[int, HitterStats] = {}
     for row in actual_rows:
@@ -227,11 +252,10 @@ def compute_actual_lineup_score(
         except ValueError:
             pos = Position.DH
 
-        player = session.get(Player, row.player_id)
-        player_pos = player.position if player is not None else None
-        base_stats = build_hitter_stats(
-            row.player_id, stats_json_by_player.get(row.player_id, {}), player_pos
-        )
+        base_stats = enriched_by_player[row.player_id]
+        # Enrichment runs first; the played-slot position is then synthesised
+        # into secondary_positions only when it is not already covered by the
+        # primary / secondary / (now enriched) recent positions.
         if (
             pos != base_stats.primary_position
             and pos not in base_stats.secondary_positions
@@ -304,7 +328,10 @@ def _resolve_opp_handedness(session: Session, run: LineupEvaluationRun) -> tuple
 
 
 def _load_recent_lineups(
-    session: Session, team_id: int, before_at: datetime
+    session: Session,
+    team_id: int,
+    before_at: datetime,
+    exclude_game_id: int | None = None,
 ) -> list[dict[int, str]]:
     """Return the team's recent announced lineups, most-recent game first.
 
@@ -312,18 +339,31 @@ def _load_recent_lineups(
     what "recently" means for position eligibility, so a position played only in
     older games no longer counts. Dedupes multiple snapshots of the same game
     (tentative → final) to the latest announced. Each element maps player_id →
-    raw position string. Excludes the current game by using ``before_at`` (the
-    run cutoff). The loop stops once the window is filled, which also avoids the
-    per-game row query for older games.
+    raw position string.
+
+    ``before_at`` bounds the window to lineups announced before the run cutoff.
+    The current game's lineup is typically announced *before* that cutoff, so
+    pass ``exclude_game_id=run.game_id`` to keep today's game out of its own
+    history (otherwise it would inflate starts_last_5_games and leak the current
+    slot into recent_positions). The loop stops once the window is filled, which
+    also avoids the per-game row query for older games. Ordering is fully
+    deterministic via ``(announced_at desc, game_id desc)`` so games sharing an
+    identical ``announced_at`` keep a stable order.
     """
+    conditions = [
+        ActualLineupSnapshot.team_id == team_id,
+        ActualLineupSnapshot.announced_at < before_at,
+    ]
+    if exclude_game_id is not None:
+        conditions.append(ActualLineupSnapshot.game_id != exclude_game_id)
     snapshots = (
         session.execute(
             select(ActualLineupSnapshot)
-            .where(
-                ActualLineupSnapshot.team_id == team_id,
-                ActualLineupSnapshot.announced_at < before_at,
+            .where(*conditions)
+            .order_by(
+                ActualLineupSnapshot.announced_at.desc(),
+                ActualLineupSnapshot.game_id.desc(),
             )
-            .order_by(ActualLineupSnapshot.announced_at.desc())
         )
         .scalars()
         .all()
@@ -452,8 +492,11 @@ def evaluate_lineup_for_run(
 
     # Enrich eligible hitters with position eligibility and start rhythm derived
     # from the team's recently announced lineups (activates position_fit /
-    # start_rhythm scoring). No-op when no prior lineups exist.
-    recent_lineups = _load_recent_lineups(session, run.team_id, run.evaluation_cutoff_at)
+    # start_rhythm scoring). The current game is excluded so it cannot count
+    # toward its own history. No-op when no prior lineups exist.
+    recent_lineups = _load_recent_lineups(
+        session, run.team_id, run.evaluation_cutoff_at, exclude_game_id=run.game_id
+    )
     eligible = _enrich_with_lineup_history(eligible, recent_lineups)
 
     # ------------------------------------------------------------------

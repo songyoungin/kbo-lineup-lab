@@ -12,11 +12,18 @@ from sqlalchemy.orm import Session, sessionmaker
 import app.models  # noqa: F401 — registers all ORM models with Base.metadata
 from app.db.base import Base
 from app.lineup_model.types import Handedness, HitterStats, Position
-from app.models.snapshot import ActualLineupSnapshot, ActualLineupSnapshotRow, IngestionRun
+from app.models.evaluation import LineupEvaluationRun
+from app.models.snapshot import (
+    ActualLineupSnapshot,
+    ActualLineupSnapshotRow,
+    IngestionRun,
+    PlayerStatSnapshotRow,
+)
 from app.services.lineup_evaluator import (
     _LINEUP_HISTORY_WINDOW,
     _enrich_with_lineup_history,
     _load_recent_lineups,
+    compute_actual_lineup_score,
 )
 
 _TEAM_ID = 1
@@ -171,3 +178,154 @@ def test_load_recent_lineups_caps_to_window(session: Session) -> None:
     lineups = _load_recent_lineups(session, _TEAM_ID, cutoff)
 
     assert len(lineups) == _LINEUP_HISTORY_WINDOW
+
+
+def test_load_recent_lineups_excludes_current_game(session: Session) -> None:
+    """When exclude_game_id is passed, the current game's lineup is kept out of
+    its own history even though it is announced before the cutoff."""
+    run = IngestionRun(source="lineup", status="completed")
+    session.add(run)
+    session.flush()
+
+    cutoff = datetime(2026, 6, 10, 18, 0, tzinfo=UTC)
+    current_game_id = 500
+
+    # Current game: announced BEFORE the cutoff (the common real-world case).
+    _seed_snapshot(
+        session,
+        game_id=current_game_id,
+        announced_at=cutoff - timedelta(hours=1),
+        rows={1: "CF", 2: "SS"},
+        ingestion_run_id=run.id,
+    )
+    # A genuinely prior game with a different player set.
+    _seed_snapshot(
+        session,
+        game_id=499,
+        announced_at=cutoff - timedelta(days=1),
+        rows={3: "LF"},
+        ingestion_run_id=run.id,
+    )
+
+    # Without exclusion the current game leaks in.
+    leaky = _load_recent_lineups(session, _TEAM_ID, cutoff)
+    assert {1: "CF", 2: "SS"} in leaky
+
+    # With exclusion only the prior game survives.
+    filtered = _load_recent_lineups(session, _TEAM_ID, cutoff, exclude_game_id=current_game_id)
+    assert filtered == [{3: "LF"}]
+    # The current game's players must not pick up any starts from their own game.
+    enriched = _enrich_with_lineup_history(
+        [_stats(1, Position.CENTER), _stats(2, Position.SHORT)], filtered
+    )
+    assert enriched[0].starts_last_5_games == 0
+    assert enriched[1].starts_last_5_games == 0
+    assert enriched[0].recent_positions == ()
+    assert enriched[1].recent_positions == ()
+
+
+def test_load_recent_lineups_tie_break_is_deterministic(session: Session) -> None:
+    """Two games sharing an identical announced_at are ordered by game_id desc."""
+    run = IngestionRun(source="lineup", status="completed")
+    session.add(run)
+    session.flush()
+
+    cutoff = datetime(2026, 7, 1, 12, 0, tzinfo=UTC)
+    same_announced = cutoff - timedelta(days=1)
+
+    # Seed lower game_id first to prove ordering is by game_id, not insert order.
+    _seed_snapshot(
+        session,
+        game_id=600,
+        announced_at=same_announced,
+        rows={1: "LF"},
+        ingestion_run_id=run.id,
+    )
+    _seed_snapshot(
+        session,
+        game_id=601,
+        announced_at=same_announced,
+        rows={2: "RF"},
+        ingestion_run_id=run.id,
+    )
+
+    lineups = _load_recent_lineups(session, _TEAM_ID, cutoff)
+
+    # Higher game_id wins the tie-break and comes first.
+    assert lineups == [{2: "RF"}, {1: "LF"}]
+
+
+def test_compute_actual_lineup_score_reflects_history(session: Session) -> None:
+    """compute_actual_lineup_score enriches the actual lineup with start rhythm,
+    so a player with recent starts scores higher than with no history at all."""
+    ingest = IngestionRun(source="lineup", status="completed")
+    session.add(ingest)
+    session.flush()
+
+    current_game_id = 700
+    cutoff = datetime(2026, 8, 1, 18, 0, tzinfo=UTC)
+
+    # The actual lineup for the current game: one player at CF.
+    actual_snap = ActualLineupSnapshot(
+        game_id=current_game_id,
+        team_id=_TEAM_ID,
+        ingestion_run_id=ingest.id,
+        announced_at=cutoff - timedelta(hours=1),
+        content_hash="actual-700",
+    )
+    session.add(actual_snap)
+    session.flush()
+    session.add(
+        ActualLineupSnapshotRow(
+            snapshot_id=actual_snap.id, player_id=1, batting_order=1, position="CF"
+        )
+    )
+
+    # Stat snapshot row for the player (drives the OPS-space components).
+    stat_snapshot_id = 9001
+    session.add(
+        PlayerStatSnapshotRow(
+            snapshot_id=stat_snapshot_id,
+            player_id=1,
+            stats_json={
+                "OPS": 0.800,
+                "OBP": 0.350,
+                "SLG": 0.450,
+                "primary_position": "CF",
+                "handedness": "R",
+            },
+        )
+    )
+    session.flush()
+
+    run = LineupEvaluationRun(
+        game_id=current_game_id,
+        team_id=_TEAM_ID,
+        model_version_id=1,
+        stat_snapshot_id=stat_snapshot_id,
+        lineup_snapshot_id=actual_snap.id,
+        evaluation_cutoff_at=cutoff,
+        status="pending",
+    )
+    session.add(run)
+    session.flush()
+
+    # Baseline: no prior lineups → starts_last_5_games stays 0 (benched band).
+    baseline = compute_actual_lineup_score(session, run, Handedness.RIGHT)
+
+    # Now seed three prior games where the player started at CF.
+    for i in range(3):
+        _seed_snapshot(
+            session,
+            game_id=690 + i,
+            announced_at=cutoff - timedelta(days=i + 1),
+            rows={1: "CF"},
+            ingestion_run_id=ingest.id,
+        )
+
+    with_history = compute_actual_lineup_score(session, run, Handedness.RIGHT)
+
+    # start_rhythm lifts from the 0.60 benched floor to 1.0 (3-5 starts), so the
+    # actual lineup now scores strictly higher — proving history flows into the
+    # actual side symmetrically with the recommended side.
+    assert with_history > baseline
