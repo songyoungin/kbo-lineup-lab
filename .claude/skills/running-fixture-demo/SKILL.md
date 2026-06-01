@@ -8,10 +8,12 @@ description: Use when launching the KBO Lineup Lab app locally to see it working
 ## Overview
 
 Launch the full KBO Lineup Lab stack (FastAPI + Next.js) against the
-deterministic `lg_2026_sample.json` fixture. Real KBO ingestion is not yet
-wired up (source URLs unverified), so this fixture path is how you see the app
-end-to-end. The fixture seeds only raw snapshots — pregame evaluation and
-postgame review are produced by jobs, which `scripts/seed_demo.py` runs for you.
+deterministic `lg_2026_sample.json` fixture. Real ingestion *is* wired up (live
+Naver collectors plus the KBO-official splits/pitcher path, run by
+`kbo-lab run --date`; see the running-supabase-dev skill) — this fixture path is
+the offline/deterministic alternative for seeing the app end-to-end without
+hitting live sources. The fixture seeds only raw snapshots — pregame evaluation
+and postgame review are produced by jobs, which `scripts/seed_demo.py` runs for you.
 
 All Python commands run from `apps/api`. The server and every Python command
 **must share the same `KBO_DATABASE_URL`** (alembic's `env.py` falls back to an
