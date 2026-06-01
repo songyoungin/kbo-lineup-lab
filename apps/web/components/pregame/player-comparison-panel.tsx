@@ -2,6 +2,7 @@
 
 import { useEffect, useReducer, useState } from "react";
 import { api } from "@/lib/api";
+import { unmodeledFactorKo } from "@/lib/i18n";
 import type {
   LineupDifference,
   PlayerComparisonResponse,
@@ -228,22 +229,16 @@ export function PlayerComparisonPanel({
               ))}
             </div>
 
-            {/* 모델 판정 */}
-            <div className="space-y-1 rounded-lg border border-zinc-200 bg-zinc-50/70 p-3">
-              <p className="text-xs font-semibold text-zinc-600">모델 판정</p>
-              <p className="text-xs text-zinc-700">{data.judgment}</p>
-            </div>
-
             {/* 미반영 요소 */}
             {data.unmodeled_factors.length > 0 && (
               <div className="space-y-1">
                 <p className="text-xs font-semibold text-zinc-600">
                   미반영 요소
                 </p>
-                <ul className="list-disc list-inside space-y-0.5">
+                <ul className="list-inside list-disc space-y-0.5">
                   {data.unmodeled_factors.map((f, i) => (
                     <li key={i} className="text-xs text-zinc-500">
-                      {f}
+                      {unmodeledFactorKo(f)}
                     </li>
                   ))}
                 </ul>

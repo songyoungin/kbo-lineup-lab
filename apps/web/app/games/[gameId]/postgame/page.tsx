@@ -4,7 +4,8 @@ import { ApiError, api } from "@/lib/api";
 import type { PostgameResponse } from "@/lib/types";
 import { ResultSummary } from "@/components/postgame/result-summary";
 import { PlayerOutcomeList } from "@/components/postgame/player-outcome-list";
-import { ChoiceReviewCard } from "@/components/postgame/choice-review-card";
+import { ChoiceReviewGroups } from "@/components/postgame/choice-review-groups";
+import { modelLimitationKo, summaryTextKo } from "@/lib/i18n";
 
 /** 모델 한계 섹션 */
 function ModelLimitations({ limitations }: { limitations: string[] }) {
@@ -14,10 +15,10 @@ function ModelLimitations({ limitations }: { limitations: string[] }) {
       <h2 className="text-xs font-bold uppercase tracking-wider text-zinc-400">
         모델 한계
       </h2>
-      <ul className="list-disc list-inside space-y-1">
+      <ul className="list-inside list-disc space-y-1">
         {limitations.map((item, i) => (
           <li key={i} className="text-xs text-zinc-500">
-            {item}
+            {modelLimitationKo(item)}
           </li>
         ))}
       </ul>
@@ -33,7 +34,9 @@ function SummaryText({ text }: { text: string }) {
       <h2 className="mb-2 text-xs font-bold uppercase tracking-wider text-zinc-400">
         종합 평가
       </h2>
-      <p className="text-sm leading-relaxed text-zinc-700">{text}</p>
+      <p className="text-sm leading-relaxed text-zinc-700">
+        {summaryTextKo(text)}
+      </p>
     </section>
   );
 }
@@ -105,17 +108,13 @@ export default async function PostgamePage({
         </div>
       </section>
 
-      {/* 선택 리뷰 카드 */}
+      {/* 선택 리뷰 — 결과 기준 그룹핑 */}
       {review.difference_reviews.length > 0 && (
         <section>
           <h2 className="mb-3 text-xs font-bold uppercase tracking-wider text-zinc-400">
             선택 리뷰
           </h2>
-          <div className="grid gap-3 md:grid-cols-2">
-            {review.difference_reviews.map((d) => (
-              <ChoiceReviewCard key={d.batting_order} review={d} />
-            ))}
-          </div>
+          <ChoiceReviewGroups reviews={review.difference_reviews} />
         </section>
       )}
 
