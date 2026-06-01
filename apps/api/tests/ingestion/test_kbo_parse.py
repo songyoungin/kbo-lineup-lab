@@ -4,15 +4,14 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from app.ingestion.kbo_parse import parse_pitcher_type_splits
-
-_FIXTURE = (
-    Path(__file__).resolve().parents[1]
-    / "fixtures"
-    / "sources"
-    / "kbo"
-    / "hitter_situation_66108.html"
+from app.ingestion.kbo_parse import (
+    parse_hitter_risp,
+    parse_pitcher_basic,
+    parse_pitcher_type_splits,
 )
+
+_FIX = Path(__file__).resolve().parents[1] / "fixtures" / "sources" / "kbo"
+_FIXTURE = _FIX / "hitter_situation_66108.html"
 
 
 def test_parse_pitcher_type_splits_reads_lhp_from_fixture() -> None:
@@ -40,3 +39,26 @@ def test_parse_pitcher_type_splits_folds_under_into_rhp() -> None:
 def test_parse_pitcher_type_splits_returns_none_without_table() -> None:
     """Absent table yields None so the caller can record a needs-review reason."""
     assert parse_pitcher_type_splits("<html><body>no table</body></html>") is None
+
+
+def test_parse_hitter_risp_returns_float() -> None:
+    """RISP (득점권타율) is read from the hitter Basic season table."""
+    html = (_FIX / "hitter_basic_66108.html").read_text(encoding="utf-8")
+    risp = parse_hitter_risp(html)
+    assert risp is not None and 0.0 <= risp <= 1.0
+    assert risp == 0.235  # verbatim from the fixture season row
+
+
+def test_parse_pitcher_basic_extracts_era_whip_so_tbf() -> None:
+    """ERA/WHIP/SO/TBF are read from the pitcher Basic season tables."""
+    html = (_FIX / "pitcher_basic_55322.html").read_text(encoding="utf-8")
+    out = parse_pitcher_basic(html)
+    assert out is not None
+    assert out["era"] > 0 and out["whip"] > 0
+    assert out["so"] >= 0 and out["tbf"] > 0
+    assert out == {"era": 3.18, "whip": 1.59, "so": 14.0, "tbf": 52.0}
+
+
+def test_parse_pitcher_basic_missing_returns_none() -> None:
+    """Absent tables yield None so the caller can record a needs-review reason."""
+    assert parse_pitcher_basic("<html></html>") is None
