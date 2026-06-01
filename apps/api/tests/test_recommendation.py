@@ -291,7 +291,7 @@ def test_evaluate_lineup_key_insights_contains_actual_total_score(session: Sessi
 
 
 def test_evaluate_lineup_opp_handedness_default_noted(session: Session) -> None:
-    """key_insights_json must document the opponent handedness default."""
+    """With no announced starter, opponent handedness defaults to RIGHT and is noted."""
     run = _seed_evaluation_run(session)
     evaluate_lineup_for_run(session, run=run)
     session.commit()
@@ -299,8 +299,28 @@ def test_evaluate_lineup_opp_handedness_default_noted(session: Session) -> None:
     summary = session.query(LineupEvaluationSummary).filter_by(evaluation_run_id=run.id).one()
     insights = summary.key_insights_json
     assert insights is not None
-    assert "opp_handedness_default" in insights
+    assert insights["opp_handedness_default"] == "R"
+    assert insights["opp_handedness_source"] == "default"
     assert "opp_handedness_note" in insights
+
+
+def test_evaluate_lineup_derives_opp_handedness_from_starter(session: Session) -> None:
+    """The announced opposing starter's throwing hand is used instead of the RIGHT default."""
+    run = _seed_evaluation_run(session)
+    game = session.query(Game).filter_by(external_id="KBO-2026-LG-DOO-001").one()
+    game.opponent_starter_throws = "L"
+    session.flush()
+
+    evaluate_lineup_for_run(session, run=run)
+    session.commit()
+
+    summary = session.query(LineupEvaluationSummary).filter_by(evaluation_run_id=run.id).one()
+    insights = summary.key_insights_json
+    assert insights is not None
+    assert insights["opp_handedness_default"] == "L"
+    assert insights["opp_handedness_source"] == "announced_starter"
+    # No limitation note when the handedness was actually derived.
+    assert "opp_handedness_note" not in insights
 
 
 def test_evaluate_lineup_re_run_does_not_duplicate_rows(session: Session) -> None:

@@ -462,24 +462,25 @@ def _make_preview_body(
     away_lineup: list[dict[str, object]],
     gdate: int = 20260415,
     gtime: str = "18:30",
+    home_starter: dict[str, object] | None = None,
+    away_starter: dict[str, object] | None = None,
 ) -> str:
     """Build a minimal Naver preview body for lineup normalizer tests."""
-    return json.dumps(
-        {
-            "result": {
-                "previewData": {
-                    "gameInfo": {
-                        "gdate": gdate,
-                        "gtime": gtime,
-                        "hCode": home_code,
-                        "aCode": away_code,
-                    },
-                    "homeTeamLineUp": {"fullLineUp": home_lineup},
-                    "awayTeamLineUp": {"fullLineUp": away_lineup},
-                }
-            }
-        }
-    )
+    preview: dict[str, object] = {
+        "gameInfo": {
+            "gdate": gdate,
+            "gtime": gtime,
+            "hCode": home_code,
+            "aCode": away_code,
+        },
+        "homeTeamLineUp": {"fullLineUp": home_lineup},
+        "awayTeamLineUp": {"fullLineUp": away_lineup},
+    }
+    if home_starter is not None:
+        preview["homeStarter"] = home_starter
+    if away_starter is not None:
+        preview["awayStarter"] = away_starter
+    return json.dumps({"result": {"previewData": preview}})
 
 
 _SAMPLE_BATTER = {
@@ -522,6 +523,35 @@ def test_normalize_lineup_lg_home(session: Session, ingestion_run: IngestionRun)
     # Naver numeric position code "8" is canonicalized to "CF".
     assert row.position == "CF"
     assert player.position == "CF"
+
+
+def test_normalize_lineup_records_opponent_starter(
+    session: Session, ingestion_run: IngestionRun
+) -> None:
+    """The opposing (non-LG) starter's name and throwing hand are stored on Game.
+
+    LG is home, so the away starter is the opponent; hitType "좌투좌타" → throws L.
+    """
+    lg = _seed_team(session, "LG", "LG 트윈스")
+    doo = _seed_team(session, "DOO", "두산 베어스")
+    game = _seed_game(session, home_team=lg, away_team=doo, external_id="20260415DOLG0")
+
+    body = _make_preview_body(
+        home_code="LG",
+        away_code="DO",
+        home_lineup=[dict(_SAMPLE_BATTER)],
+        away_lineup=[],
+        home_starter={"playerInfo": {"name": "임찬규", "hitType": "우투우타"}},
+        away_starter={"playerInfo": {"name": "로젠버그", "hitType": "좌투좌타"}},
+    )
+    raw = _make_raw_payload(
+        session, ingestion_run, body, category="lineup", source_url=_PREVIEW_SOURCE_URL
+    )
+
+    normalize_lineup(session, raw)
+
+    assert game.opponent_starter_name == "로젠버그"
+    assert game.opponent_starter_throws == "L"
 
 
 def test_normalize_lineup_lg_away(session: Session, ingestion_run: IngestionRun) -> None:

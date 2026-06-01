@@ -4,9 +4,9 @@ Reads stat/lineup snapshots for an evaluation run, delegates to the
 pure scoring functions, and persists the recommended lineup plus a
 summary.  The caller is responsible for committing the transaction.
 
-Opponent starter handedness defaults to RIGHT for MVP.  This is a
-known limitation — the actual starter's handedness should flow from a
-future ingestion step that captures game-day pitching assignments.
+Opponent starter handedness is derived from the game's announced starter
+(captured by the preview/lineup normalizer) and falls back to RIGHT only when
+no starter is known.
 """
 
 from __future__ import annotations
@@ -32,6 +32,7 @@ from app.lineup_model.types import (
     Position,
 )
 from app.models.evaluation import LineupEvaluationRun, LineupEvaluationSummary, RecommendedLineupRow
+from app.models.game import Game
 from app.models.player import Player
 from app.models.snapshot import ActualLineupSnapshotRow, PlayerStatSnapshotRow
 
@@ -269,11 +270,32 @@ def _lineup_output_hash(breakdown: LineupScoreBreakdown) -> str:
     return hashlib.sha256(canonical.encode()).hexdigest()
 
 
+_THROWS_TO_HANDEDNESS: dict[str, Handedness] = {
+    "R": Handedness.RIGHT,
+    "L": Handedness.LEFT,
+    "S": Handedness.SWITCH,
+}
+
+
+def _resolve_opp_handedness(session: Session, run: LineupEvaluationRun) -> tuple[Handedness, str]:
+    """Resolve opponent handedness from the game's announced starter.
+
+    Returns (handedness, source) where source is "announced_starter" when the
+    game carries the opposing starter's throwing hand, else "default" (RIGHT).
+    """
+    game = session.get(Game, run.game_id)
+    throws = game.opponent_starter_throws if game is not None else None
+    hand = _THROWS_TO_HANDEDNESS.get(throws) if throws else None
+    if hand is not None:
+        return hand, "announced_starter"
+    return Handedness.RIGHT, "default"
+
+
 def evaluate_lineup_for_run(
     session: Session,
     *,
     run: LineupEvaluationRun,
-    opp_handedness: Handedness = Handedness.RIGHT,
+    opp_handedness: Handedness | None = None,
 ) -> LineupEvaluationRun:
     """Compute scores and persist the recommended lineup + summary for the run.
 
@@ -307,6 +329,13 @@ def evaluate_lineup_for_run(
     # ------------------------------------------------------------------
     if run.status == "completed":
         return run
+
+    # Resolve opponent handedness: explicit arg wins; otherwise derive it from
+    # the game's announced starter, falling back to RIGHT when unknown.
+    if opp_handedness is None:
+        opp_handedness, opp_handedness_source = _resolve_opp_handedness(session, run)
+    else:
+        opp_handedness_source = "explicit"
 
     # ------------------------------------------------------------------
     # 1. Load stat snapshot rows for team players
@@ -387,9 +416,7 @@ def evaluate_lineup_for_run(
         "position_completeness_adjustment": recommended.position_completeness_adjustment,
         "handedness_balance_adjustment": recommended.handedness_balance_adjustment,
         "opp_handedness_default": str(opp_handedness),
-        "opp_handedness_note": (
-            "Defaulted to RIGHT for MVP; derive from actual starter data in future."
-        ),
+        "opp_handedness_source": opp_handedness_source,
         "players_added_vs_actual": additions,
         "players_removed_vs_actual": removals,
         "lineup": [
@@ -401,6 +428,12 @@ def evaluate_lineup_for_run(
             for slot in sorted(recommended.slots, key=lambda s: s.batting_order)
         ],
     }
+    # Surface the handedness limitation only when we actually fell back to the
+    # RIGHT default (no announced starter); a derived hand is not a limitation.
+    if opp_handedness_source == "default":
+        key_insights["opp_handedness_note"] = (
+            "Defaulted to RIGHT for MVP; derive from actual starter data in future."
+        )
 
     summary_text = order_result.summary_ko
 

@@ -41,6 +41,12 @@ class Game(Base):
     losing_pitcher_name: Mapped[str | None] = mapped_column(String(64), nullable=True)
     save_pitcher_name: Mapped[str | None] = mapped_column(String(64), nullable=True)
 
+    # Opposing (non-LG) starting pitcher from the announced preview. throws is
+    # the normalized handedness ("L"/"R"/"S"); feeds the lineup matchup model
+    # instead of the previous RIGHT default. null until the preview is ingested.
+    opponent_starter_name: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    opponent_starter_throws: Mapped[str | None] = mapped_column(String(1), nullable=True)
+
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         default=lambda: datetime.now(UTC),
