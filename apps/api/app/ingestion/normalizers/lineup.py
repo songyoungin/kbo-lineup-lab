@@ -24,6 +24,7 @@ from app.ingestion.normalizers._shared import (
     resolve_game_from_naver_url,
     to_position,
 )
+from app.models.game import Game
 from app.models.player import Player
 from app.models.snapshot import (
     ActualLineupSnapshot,
@@ -33,6 +34,29 @@ from app.models.snapshot import (
 from app.models.team import Team
 
 __all__ = ["LineupNormalizeResult", "normalize_lineup"]
+
+
+def _apply_opponent_starter(game: Game, preview: dict[str, object], lg_is_home: bool) -> None:
+    """Record the opposing (non-LG) starting pitcher's name and throwing hand.
+
+    The opponent is the away starter when LG is home, else the home starter.
+    Throwing hand is derived from ``playerInfo.hitType`` (e.g. "좌투좌타" → "L")
+    and feeds the lineup matchup model. Missing fields are left untouched.
+    """
+    starter = preview.get("awayStarter" if lg_is_home else "homeStarter")
+    if not isinstance(starter, dict):
+        return
+    info = starter.get("playerInfo")
+    if not isinstance(info, dict):
+        return
+    name = info.get("name")
+    hit_type = info.get("hitType")
+    _, throws = _parse_handedness(hit_type if isinstance(hit_type, str) else None, None)
+    if isinstance(name, str) and name:
+        game.opponent_starter_name = name
+    if throws:
+        game.opponent_starter_throws = throws
+
 
 _HAND_MAP: Final[dict[str, str]] = {"좌": "L", "우": "R", "양": "S"}
 _POSITION_PLAYER_RE: Final = re.compile(r"^([우좌])투([우좌양])타$")
@@ -189,6 +213,9 @@ def normalize_lineup(
         lineup_block = preview.get("awayTeamLineUp") or {}
     else:
         raise ValueError(f"LG not in game: hCode={home_code!r} aCode={away_code!r}")
+
+    # Capture the opposing starter (name + throwing hand) for the matchup model.
+    _apply_opponent_starter(game, preview, home_code == LG_TEAM_CODE)
 
     team = session.execute(select(Team).where(Team.code == LG_TEAM_CODE)).scalar_one_or_none()
     if team is None:

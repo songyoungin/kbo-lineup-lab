@@ -304,8 +304,7 @@ def build_team_home(session: Session, team_code: str) -> TeamHomeResponse:
             game_date=game.game_date,
             opponent_team_code=opp_code,
             venue=game.venue,
-            # Opponent starter is not seeded in the fixture; always None for MVP
-            opponent_starter=None,
+            opponent_starter=game.opponent_starter_name,
             pipeline_status=pipeline_status,
             team_score=team_score,
             opponent_score=opponent_score,
@@ -511,14 +510,13 @@ def build_pregame_view(
             LineupDifference(batting_order=order, difference_type=diff_type, main_reason=reason)
         )
 
-    # Extract model limitations from key_insights
+    # Extract model limitations from key_insights. opp_handedness_note is present
+    # only when the opponent handedness fell back to the RIGHT default; when it
+    # was derived from the announced starter there is no limitation to surface.
     model_limitations: list[str] = []
     opp_note = insights.get("opp_handedness_note")
     if isinstance(opp_note, str):
         model_limitations.append(opp_note)
-    opp_default = insights.get("opp_handedness_default")
-    if isinstance(opp_default, str):
-        model_limitations.append(f"Opponent handedness defaulted to {opp_default}")
     # Surface the actual-score method note so frontend / consumers know the
     # actual lineup is scored with synthesised position eligibility.
     model_limitations.append(ACTUAL_SCORE_METHOD_NOTE)
