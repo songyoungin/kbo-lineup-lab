@@ -71,7 +71,7 @@ const RUN_COLUMNS: Column<IngestionRunSummary>[] = [
     accessor: (row) =>
       row.error_message ? (
         <span
-          className="text-xs text-red-600 max-w-xs truncate block"
+          className="block max-w-xs truncate text-xs text-rose-600"
           title={row.error_message}
         >
           {row.error_message}
@@ -107,13 +107,13 @@ export default async function AdminIngestionPage() {
     gameStatusResult.reason.status === 404;
 
   return (
-    <div className="space-y-8 max-w-5xl">
+    <div className="max-w-5xl space-y-8">
       {/* 헤더 */}
       <header>
-        <h1 className="text-xl font-bold text-zinc-900">
+        <h1 className="text-2xl font-bold tracking-tight text-ink">
           파이프라인 수집 현황
         </h1>
-        <p className="text-sm text-zinc-500 mt-0.5">
+        <p className="mt-1 text-sm text-zinc-500">
           KBO 데이터 수집·정규화·분석 파이프라인 상태를 실시간으로 확인합니다.
         </p>
       </header>
@@ -124,7 +124,7 @@ export default async function AdminIngestionPage() {
           최근 수집 런
         </h2>
         {runsError ? (
-          <div className="rounded-md border border-red-200 bg-red-50 px-4 py-3 text-xs text-red-700">
+          <div className="rounded-lg border border-rose-200 bg-rose-50 px-4 py-3 text-xs text-rose-700">
             수집 런 목록을 불러오지 못했습니다: {runsError}
           </div>
         ) : (
@@ -140,11 +140,11 @@ export default async function AdminIngestionPage() {
       {/* 게임별 수집 상태 섹션 */}
       <section className="space-y-3">
         <div>
-          <h2 className="text-sm font-semibold text-zinc-700 uppercase tracking-wide">
+          <h2 className="text-xs font-bold uppercase tracking-wider text-zinc-400">
             게임별 수집 상태
           </h2>
           {gameStatus && (
-            <p className="text-xs text-zinc-400 mt-0.5">
+            <p className="mt-1 text-xs text-zinc-400">
               Game #{gameStatus.game_id} · 외부 ID:{" "}
               {gameStatus.game_external_id} · {gameStatus.game_date}
             </p>
@@ -152,11 +152,11 @@ export default async function AdminIngestionPage() {
         </div>
 
         {gameNotFound ? (
-          <div className="rounded-md border border-amber-200 bg-amber-50 px-4 py-3 text-xs text-amber-700">
+          <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-xs text-amber-700">
             게임 데이터가 아직 수집되지 않았습니다 (Game #{FIXTURE_GAME_ID}).
           </div>
         ) : gameStatusError ? (
-          <div className="rounded-md border border-red-200 bg-red-50 px-4 py-3 text-xs text-red-700">
+          <div className="rounded-lg border border-rose-200 bg-rose-50 px-4 py-3 text-xs text-rose-700">
             게임 수집 상태를 불러오지 못했습니다: {gameStatusError}
           </div>
         ) : gameStatus ? (

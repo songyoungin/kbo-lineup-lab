@@ -10,6 +10,34 @@ import type {
   Verdict,
 } from "@/lib/types";
 
+// KBO 팀 코드 → 한국어 표시명. DB의 team.name은 영문이므로 표시 레이어에서 변환합니다.
+export const TEAM_NAME_KO: Record<string, string> = {
+  LG: "LG 트윈스",
+  OB: "두산 베어스",
+  WO: "키움 히어로즈",
+  SK: "SSG 랜더스",
+  HT: "KIA 타이거즈",
+  SS: "삼성 라이온즈",
+  LT: "롯데 자이언츠",
+  HH: "한화 이글스",
+  NC: "NC 다이노스",
+  KT: "KT 위즈",
+};
+
+/** 팀 코드를 한국어 표시명으로 변환합니다. 미등록 코드는 코드를 그대로 반환합니다. */
+export function teamNameKo(code: string): string {
+  return TEAM_NAME_KO[code] ?? code;
+}
+
+// 팀 홈 pipeline_status 의 단축 키 → 한국어 라벨 (어드민 CATEGORY_KO 와 별개의 단축 키 집합).
+export const HOME_PIPELINE_LABEL_KO: Record<string, string> = {
+  schedule: "스케줄",
+  lineup: "라인업",
+  eval: "프리게임 평가",
+  box: "박스스코어",
+  postgame: "포스트게임 리뷰",
+};
+
 export const VERDICT_KO: Record<Verdict, string> = {
   "Nearly optimal": "거의 최적",
   Acceptable: "수용 가능",

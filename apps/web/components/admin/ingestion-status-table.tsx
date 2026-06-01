@@ -51,7 +51,7 @@ const COLUMNS: Column<CategoryStatusResponse>[] = [
     accessor: (row) =>
       row.error_message ? (
         <span
-          className="text-xs text-red-600 max-w-xs truncate block"
+          className="block max-w-xs truncate text-xs text-rose-600"
           title={row.error_message}
         >
           {row.error_message}

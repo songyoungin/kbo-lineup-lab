@@ -276,10 +276,55 @@ def test_team_home_returns_200_with_today_game(client: TestClient, _game_id: int
 
 
 def test_team_home_recent_is_empty_list(client: TestClient) -> None:
-    """recent is an empty list for MVP with no historical records."""
+    """recent is empty when the team has only a single (today's) game."""
     resp = client.get("/api/team/lg/home")
     assert resp.status_code == 200
     assert resp.json()["recent"] == []
+
+
+def test_team_home_recent_lists_past_games() -> None:
+    """recent lists the team's earlier games (most-recent-first), excluding today.
+
+    Seeds one older LG game beyond the fixture game and verifies build_team_home
+    surfaces it under `recent` with the opponent code and a None verdict (no
+    completed evaluation run exists for the older game).
+    """
+    from datetime import date
+
+    from sqlalchemy import select
+
+    from app.models.game import Game
+    from app.models.team import Team
+    from app.services.pregame_views import build_team_home
+
+    factory, g_id, t_id, _mv_id = _make_session_with_fixture()
+
+    with factory() as s:
+        opponent = s.execute(select(Team).where(Team.code != "LG")).scalars().first()
+        assert opponent is not None
+        opponent_code = opponent.code
+        older = Game(
+            external_id="20260414OLDER0",
+            home_team_id=t_id,
+            away_team_id=opponent.id,
+            game_date=date(2026, 4, 14),
+            venue="Jamsil Baseball Stadium",
+        )
+        s.add(older)
+        s.commit()
+        older_id = int(older.id)
+
+    with factory() as s:
+        home = build_team_home(s, "LG")
+        assert home.today is not None
+        # The fixture game (2026-04-15) is the most recent → today.
+        assert home.today.game_id == g_id
+        # The older game (2026-04-14) appears under recent.
+        assert [r.game_id for r in home.recent] == [older_id]
+        recent_game = home.recent[0]
+        assert recent_game.opponent_team_code == opponent_code
+        assert recent_game.game_date == date(2026, 4, 14)
+        assert recent_game.verdict is None
 
 
 def test_team_home_lineup_status_reflects_snapshot() -> None:

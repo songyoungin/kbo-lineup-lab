@@ -41,7 +41,7 @@ function fmt(v: number | null | undefined, digits = 3): string {
 function diffClass(a: number | null, b: number | null): string {
   if (a == null || b == null) return "text-zinc-700";
   if (a > b) return "text-emerald-600 font-semibold";
-  if (a < b) return "text-red-500";
+  if (a < b) return "text-rose-500";
   return "text-zinc-700";
 }
 
@@ -148,19 +148,19 @@ export function PlayerComparisonPanel({
 
   if (slots.length === 0) {
     return (
-      <div className="rounded-md border border-zinc-200 bg-white p-4 text-xs text-zinc-400">
+      <div className="rounded-xl border border-zinc-200/80 bg-surface p-4 text-xs text-zinc-400 shadow-sm">
         비교할 차이 슬롯이 없습니다.
       </div>
     );
   }
 
   return (
-    <div className="border border-zinc-200 rounded-md bg-white divide-y divide-zinc-100">
+    <div className="divide-y divide-zinc-100 rounded-xl border border-zinc-200/80 bg-surface shadow-sm">
       {/* 슬롯 선택 드롭다운 */}
-      <div className="px-4 py-3 flex items-center gap-3">
+      <div className="flex items-center gap-3 px-4 py-3">
         <label
           htmlFor="slot-select"
-          className="text-xs font-semibold text-zinc-500 uppercase tracking-wide"
+          className="text-xs font-bold uppercase tracking-wider text-zinc-400"
         >
           타순 선택
         </label>
@@ -168,7 +168,7 @@ export function PlayerComparisonPanel({
           id="slot-select"
           value={slot}
           onChange={(e) => setSlot(Number(e.target.value))}
-          className="text-sm border border-zinc-200 rounded px-2 py-1 text-zinc-700 bg-white focus:outline-none focus:ring-1 focus:ring-zinc-300"
+          className="rounded-lg border border-zinc-200 bg-white px-2.5 py-1 text-sm text-zinc-700 focus:border-brand-400 focus:outline-none focus:ring-2 focus:ring-brand-200"
         >
           {slots.map((s) => (
             <option key={s} value={s}>
@@ -187,7 +187,7 @@ export function PlayerComparisonPanel({
         )}
 
         {error && !loading && (
-          <div className="text-xs text-red-500 py-4 text-center">{error}</div>
+          <div className="py-4 text-center text-xs text-rose-500">{error}</div>
         )}
 
         {data && !loading && (
@@ -229,7 +229,7 @@ export function PlayerComparisonPanel({
             </div>
 
             {/* 모델 판정 */}
-            <div className="rounded-md bg-zinc-50 border border-zinc-200 p-3 space-y-1">
+            <div className="space-y-1 rounded-lg border border-zinc-200 bg-zinc-50/70 p-3">
               <p className="text-xs font-semibold text-zinc-600">모델 판정</p>
               <p className="text-xs text-zinc-700">{data.judgment}</p>
             </div>
