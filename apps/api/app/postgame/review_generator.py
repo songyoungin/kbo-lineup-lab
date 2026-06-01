@@ -134,6 +134,7 @@ def _build_difference_review(
         actual_player_id=actual_player_id,
         recommended_player_id=recommended_player_id,
         actual_performance=actual_perf,
+        recommended_performance=recommended_perf,
         verdict=verdict,
         rationale=rationale,
     )

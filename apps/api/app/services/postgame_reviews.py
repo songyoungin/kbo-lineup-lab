@@ -520,6 +520,7 @@ def build_postgame_view(
                     dr.recommended_player_id, f"Player({dr.recommended_player_id})"
                 ),
                 actual_performance=dr.actual_performance,
+                recommended_performance=dr.recommended_performance,
                 verdict=dr.verdict,
                 rationale=dr.rationale,
             )

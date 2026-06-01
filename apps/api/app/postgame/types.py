@@ -31,6 +31,8 @@ class DifferenceReview(BaseModel):
     actual_player_id: int
     recommended_player_id: int
     actual_performance: float
+    # None when the recommended player never appeared in the box score.
+    recommended_performance: float | None
     verdict: str  # e.g. "Actual choice succeeded", "Model would have done better"
     rationale: str
 

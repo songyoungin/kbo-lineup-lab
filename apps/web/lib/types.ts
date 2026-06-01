@@ -159,6 +159,7 @@ export interface PostgameDifferenceReview {
   recommended_player_id: number;
   recommended_player_name: string;
   actual_performance: number;
+  recommended_performance: number | null;
   verdict: string;
   rationale: string;
 }
