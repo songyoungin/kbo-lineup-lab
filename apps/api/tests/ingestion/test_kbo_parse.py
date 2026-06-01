@@ -8,6 +8,7 @@ from app.ingestion.kbo_parse import (
     parse_hitter_risp,
     parse_pitcher_basic,
     parse_pitcher_type_splits,
+    split_rate_stats,
 )
 
 _FIX = Path(__file__).resolve().parents[1] / "fixtures" / "sources" / "kbo"
@@ -94,3 +95,17 @@ def test_value_by_header_prefers_total_row_for_traded_player() -> None:
     out = parse_pitcher_basic(html)
     assert out is not None
     assert out["era"] == 5.00  # 합계 total, not the first per-team row (4.00)
+
+
+def test_split_rate_stats_computes_ops_pa() -> None:
+    line = {"ab": 54, "h": 15, "2b": 2, "3b": 0, "hr": 0, "bb": 10, "hbp": 2}
+    s = split_rate_stats(line)
+    assert s is not None
+    assert s["pa"] == 66
+    assert abs(s["obp"] - 27 / 66) < 1e-9
+    assert abs(s["slg"] - 17 / 54) < 1e-9
+    assert abs(s["ops"] - (27 / 66 + 17 / 54)) < 1e-9
+
+
+def test_split_rate_stats_zero_pa_is_none() -> None:
+    assert split_rate_stats({"ab": 0, "h": 0, "2b": 0, "3b": 0, "hr": 0, "bb": 0, "hbp": 0}) is None

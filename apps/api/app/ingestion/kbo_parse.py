@@ -150,3 +150,22 @@ def parse_pitcher_basic(html: str) -> dict[str, float] | None:
     if era is None or whip is None or tbf is None or tbf == 0:
         return None
     return {"era": era, "whip": whip, "so": so or 0.0, "tbf": tbf}
+
+
+def split_rate_stats(line: dict[str, int]) -> dict[str, float | int] | None:
+    """Compute PA/OBP/SLG/OPS from a counting line (no SF available in this table).
+
+    OBP = (H + BB + HBP) / (AB + BB + HBP) ; SLG = TB / AB ;
+    TB = singles + 2*2B + 3*3B + 4*HR ; singles = max(0, H - 2B - 3B - HR).
+    Returns None when there are no plate appearances or no at-bats.
+    """
+    ab, h = line["ab"], line["h"]
+    bb, hbp = line["bb"], line["hbp"]
+    pa = ab + bb + hbp
+    if pa == 0 or ab == 0:
+        return None
+    singles = max(0, h - line["2b"] - line["3b"] - line["hr"])
+    tb = singles + 2 * line["2b"] + 3 * line["3b"] + 4 * line["hr"]
+    obp = (h + bb + hbp) / pa
+    slg = tb / ab
+    return {"pa": pa, "obp": obp, "slg": slg, "ops": obp + slg}
