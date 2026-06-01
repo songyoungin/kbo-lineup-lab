@@ -19,9 +19,11 @@ from datetime import UTC, datetime
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.ingestion.kbo_parse import parse_pitcher_basic
 from app.lineup_model.batting_order.orderer import order as order_batting_lineup
 from app.lineup_model.batting_order.provider import build_provider
 from app.lineup_model.lineup_score import compute_lineup_score
+from app.lineup_model.pitcher_quality import matchup_difficulty_multiplier
 from app.lineup_model.player_score import compute_player_score
 from app.lineup_model.recommendation import select_and_assign_positions
 from app.lineup_model.types import (
@@ -38,6 +40,8 @@ from app.models.snapshot import (
     ActualLineupSnapshot,
     ActualLineupSnapshotRow,
     PlayerStatSnapshotRow,
+    RawIngestionPayload,
+    StatSnapshot,
 )
 
 # Number of most-recent games considered when deriving position eligibility and
@@ -327,6 +331,52 @@ def _resolve_opp_handedness(session: Session, run: LineupEvaluationRun) -> tuple
     return Handedness.RIGHT, "default"
 
 
+def _resolve_opponent_pitcher(
+    session: Session, run: LineupEvaluationRun
+) -> dict[str, float | None] | None:
+    """Resolve the opposing starter's season ERA/WHIP/K% for score calibration.
+
+    Looks up the game's announced opponent starter, finds the kbo_official
+    PitcherDetail/Basic payload captured in the same ingestion run as the stat
+    snapshot, and parses it. Returns ``{era, whip, k_pct}`` (k_pct = SO/TBF, or
+    None when TBF is zero), or None when any piece is missing. Never raises:
+    any missing link is a graceful no-op so calibration falls back to 1.0.
+    """
+    game = session.get(Game, run.game_id)
+    code = game.opponent_starter_id if game is not None else None
+    if not code:
+        return None
+
+    snap = session.get(StatSnapshot, run.stat_snapshot_id)
+    if snap is None:
+        return None
+    ingestion_run_id = snap.ingestion_run_id
+
+    payload = (
+        session.execute(
+            select(RawIngestionPayload)
+            .where(
+                RawIngestionPayload.ingestion_run_id == ingestion_run_id,
+                RawIngestionPayload.source_name == "kbo_official",
+                RawIngestionPayload.source_url.like(f"%PitcherDetail%playerId={code}%"),
+            )
+            .order_by(RawIngestionPayload.id.desc())
+        )
+        .scalars()
+        .first()
+    )
+    if payload is None:
+        return None
+
+    stats = parse_pitcher_basic(payload.raw_body)
+    if stats is None:
+        return None
+
+    tbf = stats["tbf"]
+    k_pct = stats["so"] / tbf if tbf else None
+    return {"era": stats["era"], "whip": stats["whip"], "k_pct": k_pct}
+
+
 def _load_recent_lineups(
     session: Session,
     team_id: int,
@@ -577,9 +627,22 @@ def evaluate_lineup_for_run(
     # having to recompute it on every GET.
     actual_total_score = compute_actual_lineup_score(session, run, opp_handedness)
 
+    # Calibrate BOTH headline totals by the opposing starter's quality. The
+    # multiplier scales score magnitude for matchup difficulty without touching
+    # player selection, batting order, per-slot scores, or run.output_hash
+    # (those stay based on the unmultiplied deterministic lineup). Missing
+    # opponent data is a graceful no-op (mult = 1.0, no opponent_pitcher block).
+    opponent_pitcher = _resolve_opponent_pitcher(session, run)
+    if opponent_pitcher is not None:
+        mult = matchup_difficulty_multiplier(
+            era=opponent_pitcher["era"], whip=opponent_pitcher["whip"]
+        )
+    else:
+        mult = 1.0
+
     key_insights: dict[str, object] = {
-        "recommended_total_score": recommended.total_score,
-        "actual_total_score": actual_total_score,
+        "recommended_total_score": recommended.total_score * mult,
+        "actual_total_score": actual_total_score * mult,
         "weighted_player_score": recommended.weighted_player_score,
         "position_completeness_adjustment": recommended.position_completeness_adjustment,
         "handedness_balance_adjustment": recommended.handedness_balance_adjustment,
@@ -596,6 +659,14 @@ def evaluate_lineup_for_run(
             for slot in sorted(recommended.slots, key=lambda s: s.batting_order)
         ],
     }
+    # Persist the opponent-starter context only when pitcher stats were found.
+    if opponent_pitcher is not None:
+        key_insights["opponent_pitcher"] = {
+            "era": opponent_pitcher["era"],
+            "whip": opponent_pitcher["whip"],
+            "k_pct": opponent_pitcher["k_pct"],
+            "multiplier": mult,
+        }
     # Surface the handedness limitation only when we actually fell back to the
     # RIGHT default (no announced starter); a derived hand is not a limitation.
     if opp_handedness_source == "default":
