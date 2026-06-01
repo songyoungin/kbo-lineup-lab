@@ -137,6 +137,8 @@ def build_hitter_stats(
         ops=_float("OPS"),
         obp=_float("OBP"),
         slg=_float("SLG"),
+        woba=_opt_float("woba"),
+        wrc_plus=_opt_float("wrc_plus"),
         recent_14d_ops=_opt_float("recent_14d_ops"),
         recent_30d_ops=_opt_float("recent_30d_ops"),
         vs_rhp_ops=_opt_float("vs_rhp_ops"),

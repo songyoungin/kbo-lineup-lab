@@ -122,6 +122,13 @@ def map_season_stats(
         "_source": raw,
     }
 
+    woba_raw = raw.get("woba")
+    if woba_raw is not None:
+        result["woba"] = _num(woba_raw)
+    wrc_raw = raw.get("wrcPlus")
+    if wrc_raw is not None:
+        result["wrc_plus"] = _num(wrc_raw)
+
     recent_14 = _recent_window_ops(game_log, as_of, 14)
     if recent_14 is not None:
         result["recent_14d_ops"] = recent_14

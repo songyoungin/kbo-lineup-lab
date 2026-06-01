@@ -81,3 +81,17 @@ def test_map_season_stats_recent_absent_when_no_window_data() -> None:
     out = map_season_stats(season, bats="R", position="1B")
     assert "recent_14d_ops" not in out
     assert "recent_30d_ops" not in out
+
+
+def test_map_season_stats_passes_through_woba_and_wrc_plus() -> None:
+    season = {"ab": 400, "obp": 0.360, "slg": 0.450, "ops": 0.810, "woba": 0.355, "wrcPlus": 128}
+    out = map_season_stats(season, bats="R", position="2B")
+    assert out["woba"] == 0.355
+    assert out["wrc_plus"] == 128.0
+
+
+def test_map_season_stats_omits_advanced_when_absent() -> None:
+    season = {"ab": 400, "obp": 0.360, "slg": 0.450, "ops": 0.810}
+    out = map_season_stats(season, bats="R", position="2B")
+    assert "woba" not in out
+    assert "wrc_plus" not in out
