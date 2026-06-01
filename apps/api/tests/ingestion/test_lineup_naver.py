@@ -283,6 +283,27 @@ def test_normalize_lineup_upserts_bench_hitters_without_rows(
     assert result.rows_created == 9
 
 
+def test_opponent_starter_id_captured_from_preview(
+    session: Session,
+    load_source: Callable[[str], str],
+) -> None:
+    """The opposing starter's playerInfo.pCode is stored on Game.opponent_starter_id.
+
+    LG is the home team in the fixture, so the opponent is the away starter
+    (로젠버그, pCode "55322").
+    """
+    lg, wo = _seed_teams(session)
+    game = _seed_game(session, lg, wo)
+    run = IngestionRun(source="test:lineup", status="running")
+    session.add(run)
+    session.flush()
+    payload = _save_preview_payload(session, run, load_source)
+
+    normalize_lineup(session, payload)
+
+    assert game.opponent_starter_id == "55322"
+
+
 def test_normalize_lineup_is_idempotent(
     session: Session,
     load_source: Callable[[str], str],
