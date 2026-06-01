@@ -8,6 +8,7 @@ import json
 from collections.abc import Callable
 from datetime import UTC, date, datetime
 
+import pytest
 from sqlalchemy.orm import Session
 
 from app.ingestion.normalizers.player_stats import normalize_player_stats
@@ -169,6 +170,60 @@ def test_skips_player_with_non_dict_record(
     assert result.rows_created == 1
     assert result.rows_skipped == 1
     assert result.needs_review_reasons
+
+
+def test_normalize_player_stats_populates_recent_ops(
+    session: Session, load_source: Callable[[str], str]
+) -> None:
+    # The real fixture's record.game rows are dated 2026-05, which do not fall
+    # within ~14/30 days of the seeded game_date (2025-05-14). Build a synthetic
+    # payload (same shape) whose game-log rows sit just before the game date so
+    # the recent-OPS window deterministically contains plate appearances.
+    _seed(session)
+    run = IngestionRun(source="test:season", status="running")
+    session.add(run)
+    session.flush()
+    record = {
+        "season": [
+            {
+                "gyear": "2025",
+                "ab": 442,
+                "hit": 122,
+                "h2": 18,
+                "h3": 2,
+                "hr": 3,
+                "obp": 0.379,
+                "slg": 0.346,
+                "ops": 0.725,
+            }
+        ],
+        "game": [
+            # Boundary row dated exactly on as_of (game_date): the window is
+            # strict (< as_of), so this must be EXCLUDED. Its lopsided stats
+            # would change the asserted OPS if it leaked in.
+            {"gday": "20250514", "ab": 5, "hit": 0, "h2": 0, "h3": 0, "hr": 0, "bb": 0, "sf": 0},
+            {"gday": "20250513", "ab": 4, "hit": 2, "h2": 1, "h3": 0, "hr": 0, "bb": 1, "sf": 0},
+            {"gday": "20250512", "ab": 3, "hit": 1, "h2": 0, "h3": 0, "hr": 1, "bb": 0, "sf": 0},
+        ],
+    }
+    body = json.dumps({"code": 200, "success": True, "result": {"record": json.dumps(record)}})
+    _save_body(session, run.id, "62415", body)
+
+    normalize_player_stats(session, game_external_id="20250514WOLG0", ingestion_run_id=run.id)
+
+    player = session.query(Player).filter(Player.external_id == "62415").one()
+    row = (
+        session.query(PlayerStatSnapshotRow)
+        .filter(PlayerStatSnapshotRow.player_id == player.id)
+        .one()
+    )
+    # Hand-computed over the two in-window rows (20250512/13), excluding the
+    # 20250514 boundary row:
+    #   AB=7, H=3, 2B=1, 3B=0, HR=1, BB=1, SF=0
+    #   OBP = (3+1)/(7+1+0) = 0.5
+    #   singles = max(0, 3-1-0-1) = 1; TB = 1 + 2*1 + 3*0 + 4*1 = 7; SLG = 7/7 = 1.0
+    #   OPS = 0.5 + 1.0 = 1.5
+    assert row.stats_json["recent_14d_ops"] == pytest.approx(1.5)
 
 
 def test_skips_player_not_in_db(session: Session, load_source: Callable[[str], str]) -> None:

@@ -92,6 +92,29 @@ def _extract_season_row(body: dict[str, object], *, year: str) -> dict[str, obje
     return by_year.get(_CAREER_GYEAR)
 
 
+def _extract_game_log(body: dict[str, object]) -> list[dict[str, object]]:
+    """Return record.game rows (recent per-game lines), else an empty list.
+
+    record is a JSON-encoded string holding {"game":[...], "season":[...]}.
+    """
+    result = body.get("result")
+    if not isinstance(result, dict):
+        return []
+    record_raw = result.get("record")
+    if not isinstance(record_raw, str):
+        return []
+    try:
+        record = json.loads(record_raw)
+    except json.JSONDecodeError:
+        return []
+    if not isinstance(record, dict):
+        return []
+    rows = record.get("game")
+    if not isinstance(rows, list):
+        return []
+    return [r for r in rows if isinstance(r, dict)]
+
+
 def normalize_player_stats(
     session: Session,
     *,
@@ -187,7 +210,14 @@ def normalize_player_stats(
             )
             continue
 
-        stats_json = map_season_stats(season_row, bats=player.bats, position=player.position)
+        game_log = _extract_game_log(body)
+        stats_json = map_season_stats(
+            season_row,
+            bats=player.bats,
+            position=player.position,
+            game_log=game_log,
+            as_of=game.game_date,
+        )
         stats_json["season_year"] = str(season_row.get("gyear"))
         mapped.append((player.id, stats_json))
 

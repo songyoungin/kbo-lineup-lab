@@ -11,6 +11,8 @@ docs/data-sources/player-season-stats-verification.md.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
+from datetime import date, timedelta
 from typing import Any
 
 __all__ = ["map_season_stats"]
@@ -26,8 +28,53 @@ def _num(value: Any, default: float = 0.0) -> float:
         return default
 
 
+def _recent_window_ops(
+    game_log: Sequence[dict[str, Any]] | None,
+    as_of: date | None,
+    window_days: int,
+) -> float | None:
+    """Compute OPS over games played within ``[as_of - window_days, as_of)``.
+
+    Returns None when there is no game log, no as_of date, or no plate
+    appearances in the window — callers then fall back to season OPS.
+    Note: HBP is absent from the game log, so OBP is computed without it
+    (slightly conservative).
+    """
+    if not game_log or as_of is None:
+        return None
+    start = as_of - timedelta(days=window_days)
+    ab = h = h2 = h3 = hr = bb = sf = 0
+    for row in game_log:
+        gday = str(row.get("gday", ""))
+        if len(gday) != 8 or not gday.isdigit():
+            continue
+        played = date(int(gday[0:4]), int(gday[4:6]), int(gday[6:8]))
+        if not (start <= played < as_of):
+            continue
+        ab += int(_num(row.get("ab")))
+        h += int(_num(row.get("hit")))
+        h2 += int(_num(row.get("h2")))
+        h3 += int(_num(row.get("h3")))
+        hr += int(_num(row.get("hr")))
+        bb += int(_num(row.get("bb")))
+        sf += int(_num(row.get("sf")))
+    on_base_denom = ab + bb + sf
+    if ab == 0 or on_base_denom == 0:
+        return None
+    singles = max(0, h - h2 - h3 - hr)
+    total_bases = singles + 2 * h2 + 3 * h3 + 4 * hr
+    slg = total_bases / ab
+    obp = (h + bb) / on_base_denom
+    return obp + slg
+
+
 def map_season_stats(
-    raw: dict[str, Any], *, bats: str | None, position: str | None
+    raw: dict[str, Any],
+    *,
+    bats: str | None,
+    position: str | None,
+    game_log: Sequence[dict[str, Any]] | None = None,
+    as_of: date | None = None,
 ) -> dict[str, Any]:
     """Return an evaluator stats_json dict from a source season-batting row.
 
@@ -36,10 +83,15 @@ def map_season_stats(
             h2, h3, hr, obp, and optionally slg/ops (preferred when present).
         bats: Player batting handedness ("L"/"R"/"S") or None.
         position: Canonical Position value ("CF","1B",...) or None.
+        game_log: Optional per-game batting rows (keys: gday "YYYYMMDD", ab, hit,
+            h2, h3, hr, bb, sf) used to derive recent-form OPS.
+        as_of: Reference date for the rolling windows; recent fields are only
+            emitted when both game_log and as_of are provided.
 
     Returns:
-        stats_json with float OPS/OBP/SLG, handedness, primary_position, and the
-        raw source row preserved under "_source" for auditing.
+        stats_json with float OPS/OBP/SLG, handedness, primary_position, the raw
+        source row under "_source" for auditing, and — when a game log yields
+        plate appearances inside the window — recent_14d_ops / recent_30d_ops.
     """
     ab = _num(raw.get("ab"))
     obp = _num(raw.get("obp"))
@@ -61,7 +113,7 @@ def map_season_stats(
     ops_raw = raw.get("ops")
     ops = _num(ops_raw) if ops_raw is not None else obp + slg
 
-    return {
+    result = {
         "OPS": ops,
         "OBP": obp,
         "SLG": slg,
@@ -69,3 +121,18 @@ def map_season_stats(
         "primary_position": position or "DH",
         "_source": raw,
     }
+
+    woba_raw = raw.get("woba")
+    if woba_raw is not None:
+        result["woba"] = _num(woba_raw)
+    wrc_raw = raw.get("wrcPlus")
+    if wrc_raw is not None:
+        result["wrc_plus"] = _num(wrc_raw)
+
+    recent_14 = _recent_window_ops(game_log, as_of, 14)
+    if recent_14 is not None:
+        result["recent_14d_ops"] = recent_14
+    recent_30 = _recent_window_ops(game_log, as_of, 30)
+    if recent_30 is not None:
+        result["recent_30d_ops"] = recent_30
+    return result

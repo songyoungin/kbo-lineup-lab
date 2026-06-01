@@ -63,6 +63,9 @@ class HitterStats(BaseModel):
     ops: float
     obp: float
     slg: float
+    # Advanced offense metrics (optional — fall back to OPS formula when absent)
+    woba: float | None = None
+    wrc_plus: float | None = None
     # Recent form (optional — model falls back to season OPS when absent)
     recent_14d_ops: float | None = None
     recent_30d_ops: float | None = None

@@ -5,6 +5,8 @@ numeric strings to float so the evaluator never receives a string rate."""
 
 from __future__ import annotations
 
+from datetime import date
+
 from app.ingestion.season_stats_map import map_season_stats
 
 
@@ -56,3 +58,40 @@ def test_invalid_bats_falls_back_to_right() -> None:
     raw = {"ab": 10, "hit": 3, "obp": 0.3, "slg": 0.4, "ops": 0.7}
     out = map_season_stats(raw, bats="X", position="2B")
     assert out["handedness"] == "R"
+
+
+def test_map_season_stats_computes_recent_window_ops() -> None:
+    """Game-log rows inside the window produce recent OPS; rows outside are ignored."""
+    season = {"ab": 400, "hit": 120, "h2": 25, "h3": 2, "hr": 18, "obp": 0.360, "ops": 0.850}
+    game_log = [
+        {"gday": "20260520", "ab": 4, "hit": 2, "h2": 1, "h3": 0, "hr": 1, "bb": 1, "sf": 0},
+        {"gday": "20260505", "ab": 4, "hit": 1, "h2": 0, "h3": 0, "hr": 0, "bb": 0, "sf": 0},
+        {"gday": "20260401", "ab": 4, "hit": 4, "h2": 4, "h3": 0, "hr": 0, "bb": 0, "sf": 0},
+    ]
+    out = map_season_stats(
+        season, bats="L", position="CF", game_log=game_log, as_of=date(2026, 5, 29)
+    )
+    assert out["recent_14d_ops"] == 2.1
+    assert out["recent_30d_ops"] == 0.875 + (4 / 9)
+
+
+def test_map_season_stats_recent_absent_when_no_window_data() -> None:
+    """No game log (or empty window) leaves recent fields unset so the model falls back."""
+    season = {"ab": 400, "hit": 120, "obp": 0.360, "slg": 0.450, "ops": 0.810}
+    out = map_season_stats(season, bats="R", position="1B")
+    assert "recent_14d_ops" not in out
+    assert "recent_30d_ops" not in out
+
+
+def test_map_season_stats_passes_through_woba_and_wrc_plus() -> None:
+    season = {"ab": 400, "obp": 0.360, "slg": 0.450, "ops": 0.810, "woba": 0.355, "wrcPlus": 128}
+    out = map_season_stats(season, bats="R", position="2B")
+    assert out["woba"] == 0.355
+    assert out["wrc_plus"] == 128.0
+
+
+def test_map_season_stats_omits_advanced_when_absent() -> None:
+    season = {"ab": 400, "obp": 0.360, "slg": 0.450, "ops": 0.810}
+    out = map_season_stats(season, bats="R", position="2B")
+    assert "woba" not in out
+    assert "wrc_plus" not in out
