@@ -427,6 +427,26 @@ def _enrich_with_lineup_history(
     return enriched
 
 
+def _persist_start_rhythm(
+    rows_by_player: dict[int, PlayerStatSnapshotRow], enriched: list[HitterStats]
+) -> None:
+    """Write each hitter's derived start rhythm into its stat row's stats_json.
+
+    ``starts_last_5_games`` is computed at evaluation time from lineup history,
+    not by the ingestion normalizer, so it is absent from the persisted
+    stats_json that read-time views (the pregame player comparison) consume.
+    Surfacing it here lets the comparison panel display the real value instead
+    of the default 0. The JSON dict is reassigned so SQLAlchemy detects the
+    change; existing keys are preserved. Hitters without a matching stat row
+    (e.g. not in this snapshot) are skipped.
+    """
+    for stats in enriched:
+        row = rows_by_player.get(stats.player_id)
+        if row is None:
+            continue
+        row.stats_json = {**row.stats_json, "starts_last_5_games": stats.starts_last_5_games}
+
+
 def evaluate_lineup_for_run(
     session: Session,
     *,
@@ -498,6 +518,9 @@ def evaluate_lineup_for_run(
         session, run.team_id, run.evaluation_cutoff_at, exclude_game_id=run.game_id
     )
     eligible = _enrich_with_lineup_history(eligible, recent_lineups)
+    # Surface the derived start rhythm in the persisted stat rows so read-time
+    # views (the pregame player comparison) display it instead of a default 0.
+    _persist_start_rhythm({sr.player_id: sr for sr, _ in stat_rows}, eligible)
 
     # ------------------------------------------------------------------
     # 2. Load actual lineup rows for comparison

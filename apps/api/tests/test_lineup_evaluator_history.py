@@ -329,3 +329,45 @@ def test_compute_actual_lineup_score_reflects_history(session: Session) -> None:
     # actual lineup now scores strictly higher — proving history flows into the
     # actual side symmetrically with the recommended side.
     assert with_history > baseline
+
+
+def test_persist_start_rhythm_writes_into_stats_json() -> None:
+    """The derived starts_last_5_games is written into the stat row's stats_json
+    (existing keys preserved) so read-time views can surface it."""
+    from app.services.lineup_evaluator import _persist_start_rhythm
+
+    row = PlayerStatSnapshotRow(snapshot_id=1, player_id=1, stats_json={"OPS": 0.8})
+    enriched = [
+        HitterStats(
+            player_id=1,
+            handedness=Handedness.RIGHT,
+            ops=0.8,
+            obp=0.35,
+            slg=0.45,
+            primary_position=Position.DH,
+            starts_last_5_games=3,
+        )
+    ]
+    _persist_start_rhythm({1: row}, enriched)
+    assert row.stats_json["starts_last_5_games"] == 3
+    assert row.stats_json["OPS"] == 0.8
+
+
+def test_persist_start_rhythm_skips_players_without_a_row() -> None:
+    """A hitter with no matching stat row is skipped without error."""
+    from app.services.lineup_evaluator import _persist_start_rhythm
+
+    row = PlayerStatSnapshotRow(snapshot_id=1, player_id=1, stats_json={"OPS": 0.8})
+    enriched = [
+        HitterStats(
+            player_id=99,
+            handedness=Handedness.RIGHT,
+            ops=0.8,
+            obp=0.35,
+            slg=0.45,
+            primary_position=Position.DH,
+            starts_last_5_games=2,
+        )
+    ]
+    _persist_start_rhythm({1: row}, enriched)
+    assert "starts_last_5_games" not in row.stats_json
