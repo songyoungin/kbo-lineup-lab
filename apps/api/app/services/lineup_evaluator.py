@@ -34,7 +34,17 @@ from app.lineup_model.types import (
 from app.models.evaluation import LineupEvaluationRun, LineupEvaluationSummary, RecommendedLineupRow
 from app.models.game import Game
 from app.models.player import Player
-from app.models.snapshot import ActualLineupSnapshotRow, PlayerStatSnapshotRow
+from app.models.snapshot import (
+    ActualLineupSnapshot,
+    ActualLineupSnapshotRow,
+    PlayerStatSnapshotRow,
+)
+
+# Number of most-recent games considered when deriving position eligibility and
+# start rhythm from announced-lineup history.  Bounds the lookback so a position
+# played once months ago no longer counts as "recent", and caps the per-game
+# row queries (avoids scanning the whole season).
+_LINEUP_HISTORY_WINDOW = 20  # recent games considered for position eligibility
 
 
 def build_hitter_stats(
@@ -293,6 +303,90 @@ def _resolve_opp_handedness(session: Session, run: LineupEvaluationRun) -> tuple
     return Handedness.RIGHT, "default"
 
 
+def _load_recent_lineups(
+    session: Session, team_id: int, before_at: datetime
+) -> list[dict[int, str]]:
+    """Return the team's recent announced lineups, most-recent game first.
+
+    Returns at most ``_LINEUP_HISTORY_WINDOW`` most-recent games; this window is
+    what "recently" means for position eligibility, so a position played only in
+    older games no longer counts. Dedupes multiple snapshots of the same game
+    (tentative → final) to the latest announced. Each element maps player_id →
+    raw position string. Excludes the current game by using ``before_at`` (the
+    run cutoff). The loop stops once the window is filled, which also avoids the
+    per-game row query for older games.
+    """
+    snapshots = (
+        session.execute(
+            select(ActualLineupSnapshot)
+            .where(
+                ActualLineupSnapshot.team_id == team_id,
+                ActualLineupSnapshot.announced_at < before_at,
+            )
+            .order_by(ActualLineupSnapshot.announced_at.desc())
+        )
+        .scalars()
+        .all()
+    )
+    lineups: list[dict[int, str]] = []
+    seen_games: set[int] = set()
+    for snap in snapshots:
+        if snap.game_id in seen_games:
+            continue
+        seen_games.add(snap.game_id)
+        rows = (
+            session.execute(
+                select(ActualLineupSnapshotRow).where(
+                    ActualLineupSnapshotRow.snapshot_id == snap.id
+                )
+            )
+            .scalars()
+            .all()
+        )
+        lineups.append({row.player_id: row.position for row in rows})
+        if len(lineups) == _LINEUP_HISTORY_WINDOW:
+            break
+    return lineups
+
+
+def _enrich_with_lineup_history(
+    eligible: list[HitterStats], lineups: list[dict[int, str]]
+) -> list[HitterStats]:
+    """Inject recent_positions and starts_last_5_games from lineup history.
+
+    recent_positions = distinct positions the player actually played recently,
+    excluding their primary and existing secondary positions. starts_last_5 =
+    count of the last 5 games whose lineup included the player.
+    """
+    positions_by_player: dict[int, set[str]] = {}
+    for lineup in lineups:
+        for player_id, position in lineup.items():
+            positions_by_player.setdefault(player_id, set()).add(position)
+    last_five = lineups[:5]
+
+    enriched: list[HitterStats] = []
+    for stats in eligible:
+        recents: list[Position] = []
+        for raw_pos in positions_by_player.get(stats.player_id, set()):
+            try:
+                pos = Position(raw_pos)
+            except ValueError:
+                continue
+            if pos == stats.primary_position or pos in stats.secondary_positions:
+                continue
+            recents.append(pos)
+        starts = sum(1 for lineup in last_five if stats.player_id in lineup)
+        enriched.append(
+            stats.model_copy(
+                update={
+                    "recent_positions": tuple(sorted(recents, key=str)),
+                    "starts_last_5_games": starts,
+                }
+            )
+        )
+    return enriched
+
+
 def evaluate_lineup_for_run(
     session: Session,
     *,
@@ -355,6 +449,12 @@ def evaluate_lineup_for_run(
     for stat_row, player in stat_rows:
         stats = build_hitter_stats(player.id, stat_row.stats_json, player.position)
         eligible.append(stats)
+
+    # Enrich eligible hitters with position eligibility and start rhythm derived
+    # from the team's recently announced lineups (activates position_fit /
+    # start_rhythm scoring). No-op when no prior lineups exist.
+    recent_lineups = _load_recent_lineups(session, run.team_id, run.evaluation_cutoff_at)
+    eligible = _enrich_with_lineup_history(eligible, recent_lineups)
 
     # ------------------------------------------------------------------
     # 2. Load actual lineup rows for comparison
