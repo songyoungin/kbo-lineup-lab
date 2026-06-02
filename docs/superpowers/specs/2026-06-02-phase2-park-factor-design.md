@@ -1,6 +1,10 @@
 # Phase 2 — Park Factor (구장별 run-environment) Design
 
-**Status:** Approved design (2026-06-02). Next step: implementation plan via writing-plans.
+**Status:** ❌ SUPERSEDED / BLOCKED (2026-06-02). The data premise does not hold: KBO official `HitterDetail` provides **no per-hitter 구장별 (stadium) split** — verified against 3 captured fixtures and 2 live players (Situation.aspx split tabs are 투수유형별/타순별/주자상황별/이닝별/아웃카운트별/볼카운트별/경기별/일자별; no 구장별, no home/away, no per-game stadium column). Other sources are already ruled out (Statiz DNS-unreachable; Naver has no pre-aggregated splits; our DB holds only LG games so league park factors can't be computed). A park model would therefore rest on un-sourced estimated coefficients, which fails the project's accuracy bar. **Phase 2 was re-scoped to optimal defensive position assignment — see `2026-06-02-phase2-optimal-position-assignment-design.md`.** This document is retained for the data-availability finding.
+
+---
+
+**Status (original):** Approved design (2026-06-02).
 
 **Goal:** Add a per-hitter **park factor** to the deterministic hitter score so the recommended lineup reflects how each hitter performs at the upcoming game's ballpark. This is the second phase of the 3-phase analysis-quality program (Phase 1 = pitcher matchup + clutch, MERGED PR #47; Phase 3 = run-expectancy simulation, later).
 
