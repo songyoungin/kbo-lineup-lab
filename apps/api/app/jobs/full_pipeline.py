@@ -35,6 +35,8 @@ class FullPipelineResult:
         game_id: Ingested LG game id, or None if no game/lineup was found.
         evaluation_run_id: Pregame evaluation run id, or None if it did not run.
         postgame_review_run_id: Postgame review run id, or None if it did not run.
+        games_found: Number of LG games the schedule returned for the target date;
+            0 on a true off-day and also 0 on the completed-run short-circuit path.
         error: Failure message when the analysis phase (eval/review) failed, else None.
     """
 
@@ -44,6 +46,7 @@ class FullPipelineResult:
     game_id: int | None
     evaluation_run_id: int | None
     postgame_review_run_id: int | None
+    games_found: int = 0
     error: str | None = None
 
     @property
@@ -56,10 +59,26 @@ class FullPipelineResult:
             and self.error is None
         )
 
+    @property
+    def no_game_scheduled(self) -> bool:
+        """True when ingestion completed but no LG game was scheduled (a benign off-day).
+
+        Distinct from a genuine failure: requires a clean completed run that produced
+        no game and found zero scheduled games. A scheduled-but-unlineup'd game
+        (``games_found > 0``) or any analysis ``error`` is NOT an off-day.
+        """
+        return (
+            self.daily_status == "completed"
+            and self.game_id is None
+            and self.games_found == 0
+            and self.error is None
+        )
+
     def summary(self) -> str:
         """One-line human-readable summary of the run."""
         text = (
             f"run {self.target_date.isoformat()}: daily={self.daily_status}, "
+            f"games={self.games_found}, "
             f"game_id={self.game_id}, eval_run={self.evaluation_run_id}, "
             f"postgame_run={self.postgame_review_run_id}"
         )
@@ -90,6 +109,7 @@ def run_full_pipeline(target_date: date) -> FullPipelineResult:
             game_id=None,
             evaluation_run_id=None,
             postgame_review_run_id=None,
+            games_found=daily.games_found,
         )
 
     evaluation_run_id: int | None = None
@@ -111,6 +131,7 @@ def run_full_pipeline(target_date: date) -> FullPipelineResult:
                 game_id=None,
                 evaluation_run_id=None,
                 postgame_review_run_id=None,
+                games_found=daily.games_found,
             )
 
         game_id = int(lineup.game_id)
@@ -154,6 +175,7 @@ def run_full_pipeline(target_date: date) -> FullPipelineResult:
                 game_id=game_id,
                 evaluation_run_id=evaluation_run_id,
                 postgame_review_run_id=postgame_review_run_id,
+                games_found=daily.games_found,
                 error=f"{exc.status_code}: {exc.detail}",
             )
 
@@ -164,4 +186,5 @@ def run_full_pipeline(target_date: date) -> FullPipelineResult:
         game_id=game_id,
         evaluation_run_id=evaluation_run_id,
         postgame_review_run_id=postgame_review_run_id,
+        games_found=daily.games_found,
     )

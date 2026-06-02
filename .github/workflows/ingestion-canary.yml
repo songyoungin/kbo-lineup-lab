@@ -3,8 +3,10 @@ name: ingestion-canary
 # Daily canary: run the full real-data pipeline against live Naver to prove
 # ingestion still works end-to-end. GitHub runners are ephemeral, so this uses a
 # throwaway SQLite DB unless a KBO_DATABASE_URL repo secret is configured (in which
-# case results persist). `kbo-lab run` exits non-zero on failure, so a broken
-# source or pipeline fails this workflow and alerts.
+# case results persist). `kbo-lab run` exits non-zero on a genuine failure (broken
+# source or pipeline), so this workflow fails and alerts. A KBO off-day with no LG
+# game scheduled is NOT a failure: ingestion completes with nothing to analyse and
+# exits 0, keeping the canary green so real breakage still stands out.
 
 on:
   schedule:
