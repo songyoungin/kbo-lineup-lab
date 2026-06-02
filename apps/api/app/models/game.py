@@ -45,6 +45,7 @@ class Game(Base):
     # the normalized handedness ("L"/"R"/"S"); feeds the lineup matchup model
     # instead of the previous RIGHT default. null until the preview is ingested.
     opponent_starter_name: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    opponent_starter_id: Mapped[str | None] = mapped_column(String(32), nullable=True)
     opponent_starter_throws: Mapped[str | None] = mapped_column(String(1), nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(

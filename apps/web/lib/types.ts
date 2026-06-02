@@ -78,6 +78,14 @@ export interface LineupDifference {
   main_reason: string;
 }
 
+export interface OpponentPitcher {
+  era: number | null;
+  whip: number | null;
+  // Fraction (so/tbf), e.g. 0.269 — render as percent in the UI.
+  k_pct: number | null;
+  multiplier: number;
+}
+
 export interface PregameResponse {
   game_id: number;
   actual_score: number;
@@ -88,6 +96,7 @@ export interface PregameResponse {
   recommended_lineup: LineupRow[];
   differences: LineupDifference[];
   model_limitations: string[];
+  opponent_pitcher: OpponentPitcher | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -124,6 +133,7 @@ export interface PlayerComparisonStats {
   slg: number;
   recent_14d_ops: number | null;
   recent_30d_ops: number | null;
+  risp_avg: number | null;
   vs_rhp_ops: number | null;
   vs_lhp_ops: number | null;
   pa_vs_rhp: number;

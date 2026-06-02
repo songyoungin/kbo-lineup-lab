@@ -68,6 +68,11 @@ function buildStatRows(
       actual: actual.recent_30d_ops,
       recommended: recommended.recent_30d_ops,
     },
+    {
+      label: "최근 득점권 타율 (RISP)",
+      actual: actual.risp_avg,
+      recommended: recommended.risp_avg,
+    },
     { label: "시즌 OPS", actual: actual.ops, recommended: recommended.ops },
     { label: "시즌 OBP", actual: actual.obp, recommended: recommended.obp },
     { label: "시즌 SLG", actual: actual.slg, recommended: recommended.slg },

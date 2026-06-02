@@ -687,6 +687,26 @@ def test_player_comparison_returns_two_players(
     assert len(data["unmodeled_factors"]) > 0
 
 
+def test_player_comparison_includes_risp_avg_key(
+    client: TestClient, _game_id: int, _team_id: int, _model_version_id: int
+) -> None:
+    """Both actual and recommended stat blocks expose a serialized risp_avg key.
+
+    The fixture does not seed a RISP value, so risp_avg is null here; the test
+    only asserts the KEY is present in the serialized model (backward-compatible
+    new field), mirroring the other optional rate stats.
+    """
+    body = _replay_body(_game_id, _team_id, _model_version_id)
+    client.post("/api/jobs/replay-evaluation", json=body)
+
+    resp = client.get(f"/api/games/{_game_id}/players/compare?batting_order=1")
+    assert resp.status_code == 200
+    data = resp.json()
+    for key in ("actual", "recommended"):
+        assert "risp_avg" in data[key]
+        assert data[key]["risp_avg"] is None
+
+
 # ---------------------------------------------------------------------------
 # Edge cases
 # ---------------------------------------------------------------------------
@@ -849,3 +869,86 @@ def test_pregame_model_limitations_contains_actual_score_method_note(
     assert resp.status_code == 200
     limitations = resp.json()["model_limitations"]
     assert ACTUAL_SCORE_METHOD_NOTE in limitations
+
+
+# ---------------------------------------------------------------------------
+# GET /api/games/{id}/pregame — opponent-starter quality block
+# ---------------------------------------------------------------------------
+
+
+def test_pregame_opponent_pitcher_is_null_without_data(
+    client: TestClient, _game_id: int, _team_id: int, _model_version_id: int
+) -> None:
+    """opponent_pitcher is null when the run's key_insights carry no pitcher block.
+
+    The LG fixture has no opponent starter, so evaluation produces no
+    opponent_pitcher block; the field must serialize as null (backward
+    compatible) rather than being absent.
+    """
+    body = _replay_body(_game_id, _team_id, _model_version_id)
+    client.post("/api/jobs/replay-evaluation", json=body)
+
+    resp = client.get(f"/api/games/{_game_id}/pregame")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert "opponent_pitcher" in data
+    assert data["opponent_pitcher"] is None
+
+
+def test_pregame_opponent_pitcher_maps_key_insights_block() -> None:
+    """build_pregame_view maps a key_insights opponent_pitcher block into the response.
+
+    Seeds a completed evaluation run whose summary carries an opponent_pitcher
+    block (era/whip/k_pct/multiplier) and asserts the values are surfaced on the
+    PregameResponse. k_pct is a FRACTION as written by the evaluator.
+    """
+    from sqlalchemy import select
+
+    from app.models.evaluation import LineupEvaluationRun, LineupEvaluationSummary
+    from app.models.snapshot import ActualLineupSnapshot, StatSnapshot
+    from app.services.pregame_views import build_pregame_view
+
+    factory, g_id, t_id, mv_id = _make_session_with_fixture()
+
+    with factory() as s:
+        stat_snapshot_id = s.execute(select(StatSnapshot.id)).scalars().first()
+        lineup_snapshot_id = s.execute(select(ActualLineupSnapshot.id)).scalars().first()
+        assert stat_snapshot_id is not None
+        assert lineup_snapshot_id is not None
+        eval_run = LineupEvaluationRun(
+            game_id=g_id,
+            team_id=t_id,
+            model_version_id=mv_id,
+            stat_snapshot_id=stat_snapshot_id,
+            lineup_snapshot_id=lineup_snapshot_id,
+            evaluation_cutoff_at=CUTOFF,
+            status="completed",
+            finished_at=datetime(2026, 4, 15, 12, 0, tzinfo=UTC),
+        )
+        s.add(eval_run)
+        s.commit()
+        s.add(
+            LineupEvaluationSummary(
+                evaluation_run_id=eval_run.id,
+                summary_text="seeded",
+                key_insights_json={
+                    "recommended_total_score": 0.8,
+                    "actual_total_score": 0.78,
+                    "opponent_pitcher": {
+                        "era": 3.18,
+                        "whip": 1.59,
+                        "k_pct": 14.0 / 52.0,
+                        "multiplier": 0.95,
+                    },
+                },
+            )
+        )
+        s.commit()
+
+    with factory() as s:
+        view = build_pregame_view(s, g_id, team_id=t_id)
+        assert view.opponent_pitcher is not None
+        assert view.opponent_pitcher.era == pytest.approx(3.18)
+        assert view.opponent_pitcher.whip == pytest.approx(1.59)
+        assert view.opponent_pitcher.k_pct == pytest.approx(14.0 / 52.0)
+        assert view.opponent_pitcher.multiplier == pytest.approx(0.95)

@@ -127,6 +127,47 @@ def test_build_user_prompt_lists_all_assigned_players() -> None:
     assert "L" in text
 
 
+def test_build_user_prompt_includes_opponent_pitcher_line() -> None:
+    """An opponent-pitcher dict prepends a context line with ERA/WHIP/K%."""
+    from app.lineup_model.batting_order.prompt import build_user_prompt
+
+    assigned = _assigned_three()
+    text = build_user_prompt(
+        assigned,
+        Handedness.LEFT,
+        opp_pitcher={"era": 3.18, "whip": 1.59, "k_pct": 0.269},
+    )
+    assert "ERA 3.18" in text
+    assert "WHIP 1.59" in text
+    assert "27%" in text
+
+
+def test_build_user_prompt_without_opponent_pitcher_unchanged() -> None:
+    """Omitting opp_pitcher leaves the prompt byte-identical (backward compatible)."""
+    from app.lineup_model.batting_order.prompt import build_user_prompt
+
+    assigned = _assigned_three()
+    assert build_user_prompt(assigned, Handedness.LEFT) == build_user_prompt(
+        assigned, Handedness.LEFT, opp_pitcher=None
+    )
+    assert "상대 선발 투수:" not in build_user_prompt(assigned, Handedness.LEFT)
+
+
+def test_build_user_prompt_handles_missing_k_pct() -> None:
+    """A None k_pct omits the K% part without crashing, keeping ERA/WHIP."""
+    from app.lineup_model.batting_order.prompt import build_user_prompt
+
+    assigned = _assigned_three()
+    text = build_user_prompt(
+        assigned,
+        Handedness.LEFT,
+        opp_pitcher={"era": 3.18, "whip": 1.59, "k_pct": None},
+    )
+    assert "ERA 3.18" in text
+    assert "WHIP 1.59" in text
+    assert "K%" not in text
+
+
 def test_build_provider_returns_none_when_disabled(monkeypatch: pytest.MonkeyPatch) -> None:
     """build_provider returns None when LINEUP_LLM_ENABLED is unset/false."""
     from app.lineup_model.batting_order.provider import build_provider

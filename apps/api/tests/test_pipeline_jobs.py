@@ -30,7 +30,7 @@ from app.cli import app as cli_app
 from app.db.base import Base
 from app.ingestion.collectors.box_score import BoxScoreCollectionResult, BoxScoreStatus
 from app.ingestion.collectors.lineup import LineupCollectionResult, LineupStatus
-from app.ingestion.http_client import HttpClient
+from app.ingestion.http_client import FetchError, HttpClient
 from app.ingestion.normalizers.box_score import BoxScoreNormalizeResult
 from app.ingestion.normalizers.lineup import LineupNormalizeResult
 from app.jobs.daily_pipeline import DailyPipelineResult, run_daily_pipeline
@@ -325,6 +325,72 @@ def _make_naver_daily_mock_http() -> HttpClient:
 
     def handler(request: httpx.Request) -> httpx.Response:
         u = str(request.url)
+        if "/schedule/games?" in u:
+            body = _NAVER_SCHEDULE_JSON
+        elif u.endswith("/preview"):
+            body = _NAVER_PREVIEW_JSON
+        elif u.endswith("/record"):
+            body = _NAVER_RECORD_JSON
+        else:
+            match = re.search(r"/players/kbo/([^/]+)/playerend-record", u)
+            if match is not None:
+                return httpx.Response(
+                    200,
+                    text=_naver_player_season_body(match.group(1)),
+                    headers={"content-type": "application/json"},
+                )
+            return httpx.Response(404, text="nf")
+        return httpx.Response(200, text=body, headers={"content-type": "application/json"})
+
+    transport = httpx.MockTransport(handler)
+    return HttpClient(client=httpx.Client(transport=transport), retry_backoff=(0.0,))
+
+
+# KBO official record fixtures (real HTML for one player/pitcher; the URL's
+# playerId — not the HTML — decides which Player the splits normalizer resolves,
+# so serving these for every hitter request still enriches the real fixture
+# player codes).
+_KBO_FIXTURE_DIR = Path(__file__).resolve().parent / "fixtures" / "sources" / "kbo"
+_KBO_HITTER_SITUATION_HTML = (_KBO_FIXTURE_DIR / "hitter_situation_66108.html").read_text(
+    encoding="utf-8"
+)
+_KBO_HITTER_BASIC_HTML = (_KBO_FIXTURE_DIR / "hitter_basic_66108.html").read_text(encoding="utf-8")
+_KBO_PITCHER_BASIC_HTML = (_KBO_FIXTURE_DIR / "pitcher_basic_55322.html").read_text(
+    encoding="utf-8"
+)
+
+
+def _route_kbo(url: str) -> str | None:
+    """Return the KBO fixture HTML for a koreabaseball.com record URL, else None."""
+    if "koreabaseball.com" not in url:
+        return None
+    if "HitterDetail/Situation.aspx" in url:
+        return _KBO_HITTER_SITUATION_HTML
+    if "HitterDetail/Basic.aspx" in url:
+        return _KBO_HITTER_BASIC_HTML
+    if "PitcherDetail/Basic.aspx" in url:
+        return _KBO_PITCHER_BASIC_HTML
+    return None
+
+
+def _make_naver_kbo_daily_mock_http(*, kbo_raises: bool = False) -> HttpClient:
+    """Build an HttpClient routing both Naver and KBO-official fixtures.
+
+    Args:
+        kbo_raises: When True, any koreabaseball.com request raises a
+            ``FetchError`` to simulate a KBO outage / parse failure, exercising
+            the pipeline's graceful-degradation path.
+    """
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        u = str(request.url)
+        if "koreabaseball.com" in u:
+            if kbo_raises:
+                raise FetchError("KBO unavailable")
+            html = _route_kbo(u)
+            if html is not None:
+                return httpx.Response(200, text=html, headers={"content-type": "text/html"})
+            return httpx.Response(404, text="nf")
         if "/schedule/games?" in u:
             body = _NAVER_SCHEDULE_JSON
         elif u.endswith("/preview"):
@@ -826,6 +892,70 @@ def test_daily_pipeline_preserves_started_at_on_retry(
     assert stored_naive == original_started, (
         "started_at이 최초 실행 시점을 유지해야 함 (감사 로그 보존)"
     )
+
+
+def test_daily_pipeline_enriches_snapshot_with_kbo_splits(
+    session: Session,
+    session_factory: SessionFactory,
+) -> None:
+    """KBO 픽스처가 라우팅되면 stat 스냅샷 행에 vs-L/R 스플릿과 RISP가 병합되어야 한다.
+
+    모킹 조건: 일정/프리뷰/레코드는 Naver 픽스처, koreabaseball.com 요청은 KBO
+    상황/기본 HTML 픽스처를 반환한다. 상대 선발(opponent_starter_id)은 프리뷰
+    픽스처에서 55322로 해석된다.
+    검증: 적어도 한 스냅샷 행의 stats_json에 ``vs_lhp_ops``와 ``risp_avg``가 존재한다.
+    """
+    session.add(Team(code="LG", name="LG 트윈스"))
+    session.add(Team(code="WO", name="키움 히어로즈"))
+    session.commit()
+
+    result = run_daily_pipeline(
+        target_date=date(2025, 5, 14),
+        session_factory=session_factory,
+        http=_make_naver_kbo_daily_mock_http(),
+    )
+    assert result.status == "completed"
+
+    # 상대 선발이 프리뷰에서 해석되어 투수 페이지 수집 대상이 되어야 한다.
+    game = session.execute(select(Game)).scalar_one()
+    assert game.opponent_starter_id == "55322"
+
+    rows = session.execute(select(PlayerStatSnapshotRow)).scalars().all()
+    assert rows, "Naver 시즌 스냅샷 행이 생성되어야 한다"
+    enriched = [r for r in rows if "vs_lhp_ops" in r.stats_json and "risp_avg" in r.stats_json]
+    assert enriched, "최소 한 행에 KBO 스플릿/RISP가 병합되어야 한다"
+    sample = enriched[0]
+    assert isinstance(sample.stats_json["vs_lhp_ops"], float)
+    assert isinstance(sample.stats_json["risp_avg"], float)
+
+
+def test_daily_pipeline_completes_when_kbo_fetch_raises(
+    session: Session,
+    session_factory: SessionFactory,
+) -> None:
+    """KBO 수집이 예외를 던져도 파이프라인은 성공하고 Naver 스냅샷은 생성되어야 한다.
+
+    모킹 조건: koreabaseball.com 요청은 항상 ``FetchError``를 던진다(KBO 장애 모사).
+    검증: status='completed', Naver 기반 stat 스냅샷 행이 존재하며 KBO 키는 없다.
+    """
+    session.add(Team(code="LG", name="LG 트윈스"))
+    session.add(Team(code="WO", name="키움 히어로즈"))
+    session.commit()
+
+    result = run_daily_pipeline(
+        target_date=date(2025, 5, 14),
+        session_factory=session_factory,
+        http=_make_naver_kbo_daily_mock_http(kbo_raises=True),
+    )
+
+    # KBO 장애가 파이프라인 상태나 카운트에 영향을 주지 않아야 한다.
+    assert result.status == "completed"
+    assert result.stat_snapshots_created == 1
+
+    rows = session.execute(select(PlayerStatSnapshotRow)).scalars().all()
+    assert rows, "KBO 실패와 무관하게 Naver 스냅샷 행은 생성되어야 한다"
+    assert all("vs_lhp_ops" not in r.stats_json for r in rows)
+    assert all("risp_avg" not in r.stats_json for r in rows)
 
 
 def test_kbo_lab_script_is_installed() -> None:

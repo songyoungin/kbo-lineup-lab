@@ -56,6 +56,9 @@ def _apply_opponent_starter(game: Game, preview: dict[str, object], lg_is_home: 
         game.opponent_starter_name = name
     if throws:
         game.opponent_starter_throws = throws
+    pcode = info.get("pCode")
+    if pcode is not None:
+        game.opponent_starter_id = str(pcode)
 
 
 _HAND_MAP: Final[dict[str, str]] = {"좌": "L", "우": "R", "양": "S"}
