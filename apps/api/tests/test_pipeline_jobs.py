@@ -412,6 +412,70 @@ def _make_naver_kbo_daily_mock_http(*, kbo_raises: bool = False) -> HttpClient:
     return HttpClient(client=httpx.Client(transport=transport), retry_backoff=(0.0,))
 
 
+def _schedule_body_for_date(target_date: date) -> str:
+    """Return a Naver schedule JSON placing the WO@LG game on ``target_date``.
+
+    The real fixture pins the LG game to 2025-05-14. To drive two daily-pipeline
+    runs for two different calendar days we rewrite the LG entry's ``gameId`` and
+    ``gameDate`` to ``target_date`` so the pipeline's ``Game.game_date ==
+    target_date`` filter resolves a game on each run. The per-player season and
+    KBO URLs are NOT date-keyed, so the second run still dedups against them.
+    """
+    schedule = json.loads(_NAVER_SCHEDULE_JSON)
+    ymd = target_date.strftime("%Y%m%d")
+    lg_entry = {
+        "gameId": f"{ymd}WOLG02025",
+        "categoryId": "kbo",
+        "gameDate": target_date.isoformat(),
+        "gameDateTime": f"{target_date.isoformat()}T18:30:00",
+        "homeTeamCode": "LG",
+        "homeTeamName": "LG",
+        "awayTeamCode": "WO",
+        "awayTeamName": "키움",
+        "statusCode": "RESULT",
+        "cancel": False,
+        "suspended": False,
+    }
+    schedule["result"]["games"] = [lg_entry]
+    return json.dumps(schedule, ensure_ascii=False)
+
+
+def _make_naver_daily_mock_http_dated() -> HttpClient:
+    """Naver-routing mock whose schedule LG game tracks the requested date.
+
+    Identical to :func:`_make_naver_daily_mock_http` except the schedule body is
+    synthesized from the ``fromDate`` query param so each ``target_date`` yields
+    a game on that day. The preview/record routing is suffix-based (game-id
+    agnostic) and the per-player ``playerend-record`` body is date-independent,
+    so re-fetching the same player across two runs hits the dedup path.
+    """
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        u = str(request.url)
+        if "/schedule/games?" in u:
+            match = re.search(r"fromDate=(\d{4}-\d{2}-\d{2})", u)
+            if match is None:
+                return httpx.Response(404, text="nf")
+            body = _schedule_body_for_date(date.fromisoformat(match.group(1)))
+        elif u.endswith("/preview"):
+            body = _NAVER_PREVIEW_JSON
+        elif u.endswith("/record"):
+            body = _NAVER_RECORD_JSON
+        else:
+            player_match = re.search(r"/players/kbo/([^/]+)/playerend-record", u)
+            if player_match is not None:
+                return httpx.Response(
+                    200,
+                    text=_naver_player_season_body(player_match.group(1)),
+                    headers={"content-type": "application/json"},
+                )
+            return httpx.Response(404, text="nf")
+        return httpx.Response(200, text=body, headers={"content-type": "application/json"})
+
+    transport = httpx.MockTransport(handler)
+    return HttpClient(client=httpx.Client(transport=transport), retry_backoff=(0.0,))
+
+
 # ---------------------------------------------------------------------------
 # daily_pipeline 테스트
 # ---------------------------------------------------------------------------
@@ -956,6 +1020,63 @@ def test_daily_pipeline_completes_when_kbo_fetch_raises(
     assert rows, "KBO 실패와 무관하게 Naver 스냅샷 행은 생성되어야 한다"
     assert all("vs_lhp_ops" not in r.stats_json for r in rows)
     assert all("risp_avg" not in r.stats_json for r in rows)
+
+
+def test_two_same_day_game_ingests_both_populate(
+    session: Session,
+    session_factory: SessionFactory,
+) -> None:
+    """Re-ingesting a second game the same day must not yield an empty snapshot.
+
+    The per-player season payloads are byte-identical across the two runs; the
+    re-attach fix lets the second run's normalize see them. Pre-fix the second
+    run's ``playerend-record`` payloads deduped to the first run's ingestion id,
+    so ``normalize_player_stats`` (which filters by ``ingestion_run_id``) found
+    nothing and built a snapshot with ZERO rows.
+
+    모킹 조건: 두 target_date 각각에 대해 schedule mock이 해당 날짜의 WO@LG 경기를
+    반환한다. preview/record는 game-id 무관 라우팅이며, 선수별
+    ``playerend-record`` 본문은 날짜 비의존이라 두 번째 런에서 dedup 경로를 탄다.
+    검증: 두 런 모두 stat 스냅샷을 1개 생성하고, 각 런의 ingestion_run_id로 조회한
+    스냅샷에 PlayerStatSnapshotRow가 1개 이상 존재한다(0이면 버그).
+    """
+    session.add(Team(code="LG", name="LG 트윈스"))
+    session.add(Team(code="WO", name="키움 히어로즈"))
+    session.commit()
+
+    result1 = run_daily_pipeline(
+        target_date=date(2025, 5, 14),
+        session_factory=session_factory,
+        http=_make_naver_daily_mock_http_dated(),
+    )
+    result2 = run_daily_pipeline(
+        target_date=date(2025, 5, 15),
+        session_factory=session_factory,
+        http=_make_naver_daily_mock_http_dated(),
+    )
+
+    assert result1.status == "completed"
+    assert result2.status == "completed"
+    assert result1.stat_snapshots_created == 1
+    assert result2.stat_snapshots_created == 1
+    assert result1.ingestion_run_id != result2.ingestion_run_id
+
+    def _snapshot_row_count(ingestion_run_id: int) -> int:
+        snapshot = session.execute(
+            select(StatSnapshot).where(StatSnapshot.ingestion_run_id == ingestion_run_id)
+        ).scalar_one()
+        return session.execute(
+            select(func.count())
+            .select_from(PlayerStatSnapshotRow)
+            .where(PlayerStatSnapshotRow.snapshot_id == snapshot.id)
+        ).scalar_one()
+
+    rows1 = _snapshot_row_count(result1.ingestion_run_id)
+    rows2 = _snapshot_row_count(result2.ingestion_run_id)
+    assert rows1 > 0, "first run's snapshot must have player rows"
+    assert rows2 > 0, (
+        "second same-day run's snapshot must have player rows (0 means the re-attach fix regressed)"
+    )
 
 
 def test_kbo_lab_script_is_installed() -> None:
