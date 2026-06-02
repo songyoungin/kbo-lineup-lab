@@ -97,8 +97,14 @@ def test_run_cli_command_success(monkeypatch: pytest.MonkeyPatch) -> None:
     assert "eval_run=2" in result.output
 
 
-def test_run_cli_command_fails_nonzero_when_no_game(monkeypatch: pytest.MonkeyPatch) -> None:
-    """`kbo-lab run --date` exits non-zero when no game was ingested."""
+def test_run_cli_command_fails_nonzero_when_game_scheduled_but_no_lineup(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`kbo-lab run --date` exits non-zero when a game was scheduled but not ingested.
+
+    games_found=1 means the schedule listed an LG game but no lineup was captured —
+    a genuine data gap, not a benign off-day, so exit code must be 1.
+    """
     from typer.testing import CliRunner
 
     import app.cli as cli_module
@@ -112,6 +118,7 @@ def test_run_cli_command_fails_nonzero_when_no_game(monkeypatch: pytest.MonkeyPa
             game_id=None,
             evaluation_run_id=None,
             postgame_review_run_id=None,
+            games_found=1,
         )
 
     monkeypatch.setattr(cli_module, "run_full_pipeline", fake_run_full_pipeline)

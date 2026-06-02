@@ -35,7 +35,11 @@ def run(
     target = date.fromisoformat(date_arg)
     result = run_full_pipeline(target)
     typer.echo(result.summary())
-    if not result.succeeded:
+    # A completed ingestion with no LG game scheduled (a KBO off-day) is not a
+    # failure: the canary must stay green so a real source/pipeline break still
+    # stands out. Genuine failures (daily run failed, or a game was found but
+    # eval/review errored) keep exiting non-zero.
+    if not result.succeeded and not result.no_game_scheduled:
         raise typer.Exit(code=1)
 
 
