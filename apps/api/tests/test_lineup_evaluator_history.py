@@ -255,23 +255,23 @@ def test_load_recent_lineups_tie_break_is_deterministic(session: Session) -> Non
     assert lineups == [{2: "RF"}, {1: "LF"}]
 
 
-def test_compute_actual_lineup_score_reflects_history(session: Session) -> None:
-    """compute_actual_lineup_score enriches the actual lineup with start rhythm,
-    so a player with recent starts scores higher than with no history at all."""
-    ingest = IngestionRun(source="lineup", status="completed")
-    session.add(ingest)
-    session.flush()
-
-    current_game_id = 700
-    cutoff = datetime(2026, 8, 1, 18, 0, tzinfo=UTC)
-
-    # The actual lineup for the current game: one player at CF.
+def _seed_actual_run(
+    session: Session,
+    *,
+    ingest_id: int,
+    game_id: int,
+    stat_snapshot_id: int,
+    cutoff: datetime,
+    obp: float,
+    slg: float,
+) -> LineupEvaluationRun:
+    """Seed a one-player actual lineup + stat row and return its pending run."""
     actual_snap = ActualLineupSnapshot(
-        game_id=current_game_id,
+        game_id=game_id,
         team_id=_TEAM_ID,
-        ingestion_run_id=ingest.id,
+        ingestion_run_id=ingest_id,
         announced_at=cutoff - timedelta(hours=1),
-        content_hash="actual-700",
+        content_hash=f"actual-{game_id}",
     )
     session.add(actual_snap)
     session.flush()
@@ -280,26 +280,22 @@ def test_compute_actual_lineup_score_reflects_history(session: Session) -> None:
             snapshot_id=actual_snap.id, player_id=1, batting_order=1, position="CF"
         )
     )
-
-    # Stat snapshot row for the player (drives the OPS-space components).
-    stat_snapshot_id = 9001
     session.add(
         PlayerStatSnapshotRow(
             snapshot_id=stat_snapshot_id,
             player_id=1,
             stats_json={
-                "OPS": 0.800,
-                "OBP": 0.350,
-                "SLG": 0.450,
+                "OPS": round(obp + slg, 3),
+                "OBP": obp,
+                "SLG": slg,
                 "primary_position": "CF",
                 "handedness": "R",
             },
         )
     )
     session.flush()
-
     run = LineupEvaluationRun(
-        game_id=current_game_id,
+        game_id=game_id,
         team_id=_TEAM_ID,
         model_version_id=1,
         stat_snapshot_id=stat_snapshot_id,
@@ -309,26 +305,51 @@ def test_compute_actual_lineup_score_reflects_history(session: Session) -> None:
     )
     session.add(run)
     session.flush()
+    return run
 
-    # Baseline: no prior lineups → starts_last_5_games stays 0 (benched band).
-    baseline = compute_actual_lineup_score(session, run, Handedness.RIGHT)
 
-    # Now seed three prior games where the player started at CF.
-    for i in range(3):
-        _seed_snapshot(
-            session,
-            game_id=690 + i,
-            announced_at=cutoff - timedelta(days=i + 1),
-            rows={1: "CF"},
-            ingestion_run_id=ingest.id,
-        )
+def test_compute_actual_lineup_score_reflects_obp_slg(session: Session) -> None:
+    """compute_actual_lineup_score is on the run-expectancy scale and tracks
+    offensive quality: a higher-OBP/SLG actual lineup yields strictly more
+    expected runs than a lower-OBP/SLG one.
 
-    with_history = compute_actual_lineup_score(session, run, Handedness.RIGHT)
+    Run-expectancy change: the lineup score now reflects only season OBP/SLG
+    (per-PA event rates → Markov expected runs); start_rhythm
+    (``starts_last_5_games``) drives player SELECTION via compute_player_score,
+    no longer the lineup score, so it is intentionally not asserted here.
+    """
+    ingest = IngestionRun(source="lineup", status="completed")
+    session.add(ingest)
+    session.flush()
 
-    # start_rhythm lifts from the 0.60 benched floor to 1.0 (3-5 starts), so the
-    # actual lineup now scores strictly higher — proving history flows into the
-    # actual side symmetrically with the recommended side.
-    assert with_history > baseline
+    cutoff = datetime(2026, 8, 1, 18, 0, tzinfo=UTC)
+
+    low_run = _seed_actual_run(
+        session,
+        ingest_id=ingest.id,
+        game_id=700,
+        stat_snapshot_id=9001,
+        cutoff=cutoff,
+        obp=0.300,
+        slg=0.380,
+    )
+    high_run = _seed_actual_run(
+        session,
+        ingest_id=ingest.id,
+        game_id=701,
+        stat_snapshot_id=9002,
+        cutoff=cutoff,
+        obp=0.420,
+        slg=0.560,
+    )
+
+    low_score = compute_actual_lineup_score(session, low_run, Handedness.RIGHT)
+    high_score = compute_actual_lineup_score(session, high_run, Handedness.RIGHT)
+
+    # Expected runs live on the ~3-6 scale (single-batter lineup here), and the
+    # higher-OBP/SLG lineup scores strictly more.
+    assert high_score > low_score
+    assert low_score > 0.0
 
 
 def test_persist_start_rhythm_writes_into_stats_json() -> None:

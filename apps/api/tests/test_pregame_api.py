@@ -825,15 +825,15 @@ def test_actual_and_recommended_scores_on_same_scale(
 ) -> None:
     """actual_score must be in the same numeric band as recommended_score.
 
-    Both come from compute_lineup_score, which produces values in the
-    OPS-rate-stat space (~0.6–1.0) plus a position_completeness bonus
-    (0 or +0.05) and a handedness_balance_penalty (0, -1, or -2).
+    Run-expectancy change: both come from compute_lineup_score, which now
+    produces expected runs (~3-6) — the lineup's batting order run through the
+    Markov model on season OBP/SLG, plus a small run-unit handedness penalty
+    (weighted_player_score = raw expected runs, position_completeness = 0.0).
 
-    If the actual lineup share the same handedness composition as the
-    recommended (likely for this fixture since both use the same player
-    pool), both scores should be within ~0.3 of each other — far closer
-    than the previous bug where actual was a raw 0.7+ mean and recommended
-    was -1.1 (mean + handedness penalty).
+    The actual and recommended lineups draw from the same player pool here, so
+    they differ only in batting order; their expected-run totals should stay
+    within ~0.3 of each other — far closer than the previous scale-mismatch bug
+    where the two scores lived in different numeric spaces.
     """
     body = _replay_body(_game_id, _team_id, _model_version_id)
     client.post("/api/jobs/replay-evaluation", json=body)
