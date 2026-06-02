@@ -28,7 +28,7 @@ def _max_same_handed_run(handed: list[str]) -> int:
     return longest if handed else 0
 
 
-def _handedness_penalty(order: list[tuple[Position, HitterStats]]) -> float:
+def handedness_penalty(order: list[tuple[Position, HitterStats]]) -> float:
     """Return a run-unit penalty for long same-handedness streaks in the order."""
     handed = ["R" if s.handedness == Handedness.SWITCH else str(s.handedness) for _p, s in order]
     run = _max_same_handed_run(handed)
@@ -63,7 +63,7 @@ def optimize_order(
 
     def objective(order: list[tuple[Position, HitterStats]]) -> float:
         rates = tuple(rates_by_pid[s.player_id] for _p, s in order)
-        return expected_runs(rates) - _handedness_penalty(order)
+        return expected_runs(rates) - handedness_penalty(order)
 
     current = sorted(assigned.items(), key=lambda kv: (-kv[1].obp, kv[1].player_id))
     current = [(pos, stats) for pos, stats in current]

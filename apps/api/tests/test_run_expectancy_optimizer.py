@@ -42,7 +42,7 @@ def test_returns_valid_permutation() -> None:
 
 def test_is_local_optimum() -> None:
     """No single pairwise swap improves the objective (runs minus handedness penalty)."""
-    from app.lineup_model.run_expectancy.optimizer import _handedness_penalty
+    from app.lineup_model.run_expectancy.optimizer import handedness_penalty
 
     assigned = _assigned([(0.28 + 0.02 * i, 0.36 + 0.02 * i) for i in range(9)])
     slots = optimize_order(assigned, Handedness.RIGHT)
@@ -51,7 +51,7 @@ def test_is_local_optimum() -> None:
 
     def obj(seq: list[LineupSlot]) -> float:
         rates = tuple(event_rates(by_pid[s.player_id].obp, by_pid[s.player_id].slg) for s in seq)
-        pen = _handedness_penalty([(s.position, by_pid[s.player_id]) for s in seq])
+        pen = handedness_penalty([(s.position, by_pid[s.player_id]) for s in seq])
         return expected_runs(rates) - pen
 
     base = obj(ordered)
