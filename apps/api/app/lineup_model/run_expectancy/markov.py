@@ -15,6 +15,8 @@ tracking the batter inside the state.
 
 from __future__ import annotations
 
+import functools
+
 from app.lineup_model.run_expectancy.rates import EventRates
 
 # bases is a 3-bit int: bit0 = runner on 1B, bit1 = 2B, bit2 = 3B.
@@ -103,6 +105,7 @@ def _inning_from_leadoff(order: tuple[EventRates, ...], leadoff: int) -> tuple[f
     return exp_runs, next_leadoff
 
 
+@functools.lru_cache(maxsize=100_000)
 def expected_runs(order: tuple[EventRates, ...], innings: int = 9) -> float:
     """Expected runs scored by ``order`` over ``innings`` innings.
 
