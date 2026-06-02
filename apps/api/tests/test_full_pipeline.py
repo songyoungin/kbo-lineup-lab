@@ -119,3 +119,90 @@ def test_run_cli_command_fails_nonzero_when_no_game(monkeypatch: pytest.MonkeyPa
 
     assert result.exit_code == 1
     assert "run 2026-05-30" in result.output
+
+
+def test_no_game_scheduled_true_on_off_day() -> None:
+    """no_game_scheduled is True when ingestion completed but no LG game was scheduled."""
+    result = FullPipelineResult(
+        target_date=date(2026, 6, 1),
+        daily_status="completed",
+        teams_created=0,
+        game_id=None,
+        evaluation_run_id=None,
+        postgame_review_run_id=None,
+        games_found=0,
+    )
+    assert result.no_game_scheduled is True
+    assert result.succeeded is False
+
+
+def test_no_game_scheduled_false_when_game_present() -> None:
+    """A scheduled game (games_found > 0) is never treated as an off-day."""
+    result = FullPipelineResult(
+        target_date=date(2026, 5, 30),
+        daily_status="completed",
+        teams_created=0,
+        game_id=1,
+        evaluation_run_id=2,
+        postgame_review_run_id=3,
+        games_found=1,
+    )
+    assert result.no_game_scheduled is False
+
+
+def test_no_game_scheduled_false_when_game_scheduled_but_no_lineup() -> None:
+    """A scheduled game whose lineup wasn't ingested (games_found > 0, game_id None)
+    is a genuine gap to alert on, not a benign off-day."""
+    result = FullPipelineResult(
+        target_date=date(2026, 5, 30),
+        daily_status="completed",
+        teams_created=0,
+        game_id=None,
+        evaluation_run_id=None,
+        postgame_review_run_id=None,
+        games_found=1,
+    )
+    assert result.no_game_scheduled is False
+
+
+def test_no_game_scheduled_false_when_daily_failed() -> None:
+    """A failed daily run is a genuine failure, not an off-day."""
+    result = FullPipelineResult(
+        target_date=date(2026, 6, 1),
+        daily_status="failed",
+        teams_created=0,
+        game_id=None,
+        evaluation_run_id=None,
+        postgame_review_run_id=None,
+        games_found=0,
+    )
+    assert result.no_game_scheduled is False
+
+
+def test_no_game_scheduled_false_when_error_set() -> None:
+    """An analysis error is a genuine failure, not an off-day, even if games_found is 0."""
+    result = FullPipelineResult(
+        target_date=date(2026, 5, 30),
+        daily_status="completed",
+        teams_created=0,
+        game_id=1,
+        evaluation_run_id=None,
+        postgame_review_run_id=None,
+        games_found=0,
+        error="500: boom",
+    )
+    assert result.no_game_scheduled is False
+
+
+def test_summary_includes_games_found() -> None:
+    """summary() surfaces games_found for canary log readability."""
+    result = FullPipelineResult(
+        target_date=date(2026, 6, 1),
+        daily_status="completed",
+        teams_created=0,
+        game_id=None,
+        evaluation_run_id=None,
+        postgame_review_run_id=None,
+        games_found=0,
+    )
+    assert "games=0" in result.summary()
