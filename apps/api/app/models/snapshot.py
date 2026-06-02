@@ -205,11 +205,16 @@ class BoxScoreRow(Base):
 
 
 class RawIngestionPayload(Base):
-    """Immutable raw payload fetched from an external KBO data source.
+    """Content-addressed raw payload fetched from an external KBO data source.
 
     Collectors write rows here BEFORE parsing. Normalizers (Plan 17) consume
     these rows to populate validated domain tables. Storing the raw body lets
     us replay against new parser versions without re-fetching.
+
+    The body is append-only (content-addressed by source/url/payload_hash), but
+    ingestion_run_id and fetched_at may be re-assigned to the most-recent
+    fetching run on a content-identical dedup hit, so normalizers filtering by
+    ingestion_run_id can see payloads re-fetched under a later run.
     """
 
     __tablename__ = "raw_ingestion_payloads"

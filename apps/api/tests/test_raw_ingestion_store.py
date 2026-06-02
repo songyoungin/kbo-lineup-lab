@@ -229,3 +229,28 @@ def test_save_supports_all_categories(session: Session, category: PayloadCategor
 
     assert created is True
     assert row.category == category.value
+
+
+def test_duplicate_reattaches_to_current_run(session: Session) -> None:
+    """A byte-identical payload saved under a second run re-attaches to that
+    run (so the second run's normalizers, which filter by ingestion_run_id,
+    can see it). created is still False; no new row is inserted."""
+    # First run saves the payload.
+    run_a = _seed_run(session)
+    p_a = _make_payload(run_a)
+    row_a, created_a = save_raw_payload(session, p_a)
+    assert created_a is True
+
+    # Second run re-fetches the byte-identical payload (same source/url/body).
+    # Use a distinct source name to avoid the UniqueConstraint on ingestion_runs.source.
+    run_b_obj = IngestionRun(source="test-source-2", status="running")
+    session.add(run_b_obj)
+    session.flush()
+    run_b = run_b_obj.id
+
+    p_b = _make_payload(run_b)
+    row_b, created_b = save_raw_payload(session, p_b)
+
+    assert created_b is False  # no new row
+    assert row_b.id == row_a.id  # same physical row
+    assert row_b.ingestion_run_id == run_b  # re-attached to the current run

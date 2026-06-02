@@ -40,6 +40,14 @@ def save_raw_payload(
         )
     ).scalar_one_or_none()
     if existing is not None:
+        # Re-attach the deduplicated payload to the current run so this run's
+        # normalizers (which filter by ingestion_run_id) can see it. Bodies are
+        # byte-identical, so ownership is not load-bearing; the most-recent
+        # fetcher is the run that needs it. No-op when re-saving within a run.
+        if existing.ingestion_run_id != payload.ingestion_run_id:
+            existing.ingestion_run_id = payload.ingestion_run_id
+            existing.fetched_at = payload.fetched_at
+            session.flush()
         return existing, False
     row = RawIngestionPayload(
         ingestion_run_id=payload.ingestion_run_id,
