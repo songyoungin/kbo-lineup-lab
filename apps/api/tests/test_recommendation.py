@@ -391,6 +391,84 @@ def test_build_hitter_stats_raises_typeerror_on_non_numeric(session: Session) ->
     assert "list" in msg  # type name surfaces too
 
 
+def _single_pos(player_id: int, position: Position, ops: float) -> HitterStats:
+    """A hitter eligible only at `position` (primary), with offense scaled by ops."""
+    return HitterStats(
+        player_id=player_id,
+        handedness=Handedness.RIGHT,
+        ops=ops,
+        obp=ops - 0.40,
+        slg=ops - 0.20,
+        primary_position=position,
+        starts_last_5_games=3,
+    )
+
+
+def test_assignment_is_optimal_not_greedy() -> None:
+    """Greedy fills C first and strands 1B; the optimal solver keeps A at 1B."""
+    a = HitterStats(  # strong, eligible 1B (primary) + C (secondary)
+        player_id=1,
+        handedness=Handedness.RIGHT,
+        ops=0.950,
+        obp=0.420,
+        slg=0.560,
+        primary_position=Position.FIRST,
+        secondary_positions=(Position.C,),
+        starts_last_5_games=3,
+    )
+    b = _single_pos(2, Position.C, 0.780)  # C-only, moderate
+    w = _single_pos(3, Position.FIRST, 0.600)  # 1B-only, weak
+    fillers = [
+        _single_pos(10, Position.SECOND, 0.700),
+        _single_pos(11, Position.THIRD, 0.700),
+        _single_pos(12, Position.SHORT, 0.700),
+        _single_pos(13, Position.LEFT, 0.700),
+        _single_pos(14, Position.CENTER, 0.700),
+        _single_pos(15, Position.RIGHT, 0.700),
+        _single_pos(16, Position.DH, 0.700),
+    ]
+    pool = [a, b, w, *fillers]
+
+    assigned = select_and_assign_positions(pool, Handedness.RIGHT)
+
+    # Optimal: A at his primary 1B, B at C. (Greedy would put A at C, W at 1B.)
+    assert assigned[Position.FIRST].player_id == 1
+    assert assigned[Position.C].player_id == 2
+    assert 3 not in {s.player_id for s in assigned.values()}  # weak W left out
+
+
+def test_canonical_tiebreak_places_smaller_id_at_earlier_position() -> None:
+    """Equal-total optima resolve to the lexicographically smallest assignment."""
+
+    def cross(player_id: int) -> HitterStats:
+        return HitterStats(
+            player_id=player_id,
+            handedness=Handedness.RIGHT,
+            ops=0.800,
+            obp=0.360,
+            slg=0.440,
+            primary_position=Position.SECOND,
+            secondary_positions=(Position.SHORT,),
+            starts_last_5_games=3,
+        )
+
+    p, q = cross(20), cross(10)  # identical except id; pass in non-sorted order
+    fillers = [
+        _single_pos(1, Position.C, 0.700),
+        _single_pos(2, Position.FIRST, 0.700),
+        _single_pos(3, Position.THIRD, 0.700),
+        _single_pos(4, Position.LEFT, 0.700),
+        _single_pos(5, Position.CENTER, 0.700),
+        _single_pos(6, Position.RIGHT, 0.700),
+        _single_pos(7, Position.DH, 0.700),
+    ]
+    assigned = select_and_assign_positions([p, q, *fillers], Handedness.RIGHT)
+
+    # 2B (earlier in position order) takes the smaller id; SS takes the larger.
+    assert assigned[Position.SECOND].player_id == 10
+    assert assigned[Position.SHORT].player_id == 20
+
+
 def test_evaluate_persists_llm_rationale_and_summary(
     session: Session, monkeypatch: pytest.MonkeyPatch
 ) -> None:

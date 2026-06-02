@@ -2,27 +2,23 @@
 
 Strategy
 --------
-Given a pool of eligible hitters this module uses a constrained greedy
-approach to build a valid 9-slot lineup:
+Given a pool of eligible hitters this module builds a valid 9-slot lineup:
 
-1. For each defensive position in LINEUP_POSITIONS order (C, 1B, …, DH)
-   pick the highest-scoring eligible player not already assigned to
-   another position.  Score is derived from compute_player_score with
-   the candidate position.  Ties are broken by ascending player_id for
-   determinism.
+1. Assign the 9 defensive positions by solving the assignment problem exactly:
+   a maximum-weight matching of distinct eligible players to positions, where
+   a player's weight at a position is compute_player_score(...).total_score and
+   ineligible (None-scoring) pairs are forbidden. Equal-total optima are broken
+   canonically (lexicographically smallest assigned-player_id tuple in position
+   order) so the result is deterministic.
 
 2. Once the 9 defensive assignments are fixed, sort players into batting
    order slots by applying slot-specific reshuffling:
    - Slot 1: highest OBP
    - Slot 4: highest SLG
    - Slot 3: highest OPS (balanced)
-   - Slots 2, 5–9: descending composite score for the remaining players.
+   - Slots 2, 5-9: descending composite score for the remaining players.
 
 3. Compute and return the LineupScoreBreakdown for the resulting lineup.
-
-This greedy approach is O(positions × players) and is fully deterministic
-for identical inputs.  For small pools (≤ ~15 hitters) the quality is
-acceptable for MVP purposes.  A future version may enumerate permutations.
 """
 
 from __future__ import annotations
@@ -39,7 +35,7 @@ from app.lineup_model.types import (
     Position,
 )
 
-# Ordered list of positions to fill (determines greedy assignment sequence).
+# Ordered list of positions to fill (determines assignment sequence).
 _POSITIONS_TO_FILL: tuple[Position, ...] = (
     Position.C,
     Position.FIRST,
@@ -53,44 +49,87 @@ _POSITIONS_TO_FILL: tuple[Position, ...] = (
 )
 
 
-def _best_player_for_position(
-    candidates: list[HitterStats],
-    position: Position,
+def select_and_assign_positions(
+    eligible_players: list[HitterStats],
     opp_handedness: Handedness,
-    excluded_ids: set[int],
-) -> HitterStats | None:
-    """Return the highest-scoring available player for a position.
+) -> dict[Position, HitterStats]:
+    """Assign the 9 defensive positions to maximise total per-position score.
 
-    Eligibility is determined by compute_player_score returning non-None.
-    Ties broken by ascending player_id (stable, deterministic).
+    Solves the assignment problem exactly: a maximum-weight matching of distinct
+    players to ``_POSITIONS_TO_FILL``, where a (player, position) pair is
+    forbidden when ``compute_player_score`` returns None. Among equally optimal
+    assignments the canonical one is chosen -- the tuple of assigned player_ids,
+    read in ``_POSITIONS_TO_FILL`` order, that is lexicographically smallest --
+    so the result is a pure, deterministic function of the inputs.
+
+    Complexity is O(positions * 2^P * P) with memoisation, where P is the pool
+    size; available-hitter pools are small (~13-16), so this is trivially fast.
 
     Args:
-        candidates: Pool of eligible hitters.
-        position: Defensive position to fill.
+        eligible_players: Pool of available hitters.
         opp_handedness: Opposing starter's handedness.
-        excluded_ids: player_ids already assigned to another position.
 
     Returns:
-        Best HitterStats or None if no eligible player remains.
+        Mapping of position to the assigned HitterStats (9 entries).
+
+    Raises:
+        ValueError: If the 9 positions cannot be filled with distinct eligible
+            players from the pool.
     """
-    best: HitterStats | None = None
-    best_score: float = -1.0
+    # Canonical player order: ascending player_id. Bit i corresponds to pool[i].
+    pool = sorted(eligible_players, key=lambda s: s.player_id)
+    n = len(pool)
 
-    for stats in candidates:
-        if stats.player_id in excluded_ids:
-            continue
-        breakdown = compute_player_score(stats, position, opp_handedness)
-        if breakdown is None:
-            # Impossible position — skip
-            continue
-        score = breakdown.total_score
-        if score > best_score or (
-            score == best_score and (best is None or stats.player_id < best.player_id)
-        ):
-            best = stats
-            best_score = score
+    # score[i][k] = total score of pool[i] at _POSITIONS_TO_FILL[k], or None
+    # (forbidden cell) when the player is ineligible for that position.
+    score: list[list[float | None]] = []
+    for stats in pool:
+        row: list[float | None] = []
+        for pos in _POSITIONS_TO_FILL:
+            breakdown = compute_player_score(stats, pos, opp_handedness)
+            row.append(breakdown.total_score if breakdown is not None else None)
+        score.append(row)
 
-    return best
+    # Fast path: name the position in the common infeasible case (no eligible player at all).
+    for k, pos in enumerate(_POSITIONS_TO_FILL):
+        if all(score[i][k] is None for i in range(n)):
+            raise ValueError(f"Cannot fill position {pos}: no eligible player remaining in pool.")
+
+    num_positions = len(_POSITIONS_TO_FILL)
+    memo: dict[tuple[int, int], tuple[float, tuple[int, ...]] | None] = {}
+
+    def solve(k: int, used: int) -> tuple[float, tuple[int, ...]] | None:
+        """Best (total, player_id tuple) for positions k..end given used players."""
+        if k == num_positions:
+            return (0.0, ())
+        key = (k, used)
+        if key in memo:
+            return memo[key]
+        best: tuple[float, tuple[int, ...]] | None = None
+        for i in range(n):  # ascending player_id -> canonical tie-break
+            if used & (1 << i):
+                continue
+            cell = score[i][k]
+            if cell is None:
+                continue
+            sub = solve(k + 1, used | (1 << i))
+            if sub is None:
+                continue
+            cand = (cell + sub[0], (pool[i].player_id, *sub[1]))
+            if best is None or cand[0] > best[0] or (cand[0] == best[0] and cand[1] < best[1]):
+                best = cand
+        memo[key] = best
+        return best
+
+    result = solve(0, 0)
+    if result is None:
+        raise ValueError(
+            "Cannot fill all defensive positions: no assignment of distinct "
+            "eligible players covers every position."
+        )
+    _, player_ids = result
+    by_id = {stats.player_id: stats for stats in pool}
+    return {pos: by_id[pid] for pos, pid in zip(_POSITIONS_TO_FILL, player_ids, strict=True)}
 
 
 def _assign_batting_order(
@@ -99,10 +138,10 @@ def _assign_batting_order(
 ) -> list[LineupSlot]:
     """Assign batting-order slots using slot-specific reshuffling.
 
-    Slot 1 → highest OBP
-    Slot 4 → highest SLG
-    Slot 3 → highest OPS (season)
-    Remaining slots (2, 5, 6, 7, 8, 9) → descending composite score
+    Slot 1 -> highest OBP
+    Slot 4 -> highest SLG
+    Slot 3 -> highest OPS (season)
+    Remaining slots (2, 5, 6, 7, 8, 9) -> descending composite score
     (using the player's own position for the score; ties by player_id).
 
     Args:
@@ -138,57 +177,25 @@ def _assign_batting_order(
                 best_val = val
         return remaining.pop(best_idx)
 
-    # Slot 1 — highest OBP
+    # Slot 1 -- highest OBP
     pos1, s1 = pop_by_key(lambda pos, st: st.obp)
     slots.append(LineupSlot(batting_order=1, player_id=s1.player_id, position=pos1))
 
-    # Slot 4 — highest SLG
+    # Slot 4 -- highest SLG
     pos4, s4 = pop_by_key(lambda pos, st: st.slg)
     slots.append(LineupSlot(batting_order=4, player_id=s4.player_id, position=pos4))
 
-    # Slot 3 — highest OPS (balanced)
+    # Slot 3 -- highest OPS (balanced)
     pos3, s3 = pop_by_key(lambda pos, st: st.ops)
     slots.append(LineupSlot(batting_order=3, player_id=s3.player_id, position=pos3))
 
-    # Remaining 6 slots (2, 5, 6, 7, 8, 9) — descending composite
+    # Remaining 6 slots (2, 5, 6, 7, 8, 9) -- descending composite
     remaining_orders = [2, 5, 6, 7, 8, 9]
     for order in remaining_orders:
         pos_r, s_r = pop_by_key(lambda pos, st: composite(pos, st))
         slots.append(LineupSlot(batting_order=order, player_id=s_r.player_id, position=pos_r))
 
     return slots
-
-
-def select_and_assign_positions(
-    eligible_players: list[HitterStats],
-    opp_handedness: Handedness,
-) -> dict[Position, HitterStats]:
-    """Greedily assign the highest-scoring eligible player to each defensive position.
-
-    Args:
-        eligible_players: Pool of available hitters.
-        opp_handedness: Opposing starter's handedness.
-
-    Returns:
-        Mapping of position to the assigned HitterStats (9 entries).
-
-    Raises:
-        ValueError: If any of the 9 positions cannot be filled from the pool.
-    """
-    assigned: dict[Position, HitterStats] = {}
-    excluded_ids: set[int] = set()
-
-    for position in _POSITIONS_TO_FILL:
-        best = _best_player_for_position(eligible_players, position, opp_handedness, excluded_ids)
-        if best is None:
-            raise ValueError(
-                f"Cannot fill position {position}: no eligible player remaining in pool. "
-                f"Assigned so far: {list(assigned.keys())}"
-            )
-        assigned[position] = best
-        excluded_ids.add(best.player_id)
-
-    return assigned
 
 
 def generate_recommendation(
