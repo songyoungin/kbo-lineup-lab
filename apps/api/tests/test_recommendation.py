@@ -469,6 +469,24 @@ def test_canonical_tiebreak_places_smaller_id_at_earlier_position() -> None:
     assert assigned[Position.SHORT].player_id == 20
 
 
+def test_batting_order_uses_run_expectancy_optimizer() -> None:
+    """The deterministic order is the run-expectancy optimum, not the old heuristic."""
+    from app.lineup_model.recommendation import _assign_batting_order
+    from app.lineup_model.run_expectancy.optimizer import optimize_order
+
+    pool = _make_pool()
+    assigned = select_and_assign_positions(pool, Handedness.RIGHT)
+    via_recommendation = sorted(
+        _assign_batting_order(assigned, Handedness.RIGHT), key=lambda s: s.batting_order
+    )
+    via_optimizer = sorted(
+        optimize_order(assigned, Handedness.RIGHT), key=lambda s: s.batting_order
+    )
+    assert [(s.batting_order, s.player_id, s.position) for s in via_recommendation] == [
+        (s.batting_order, s.player_id, s.position) for s in via_optimizer
+    ]
+
+
 def test_evaluate_persists_llm_rationale_and_summary(
     session: Session, monkeypatch: pytest.MonkeyPatch
 ) -> None:

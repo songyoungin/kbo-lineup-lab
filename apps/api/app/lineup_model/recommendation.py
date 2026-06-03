@@ -11,22 +11,18 @@ Given a pool of eligible hitters this module builds a valid 9-slot lineup:
    canonically (lexicographically smallest assigned-player_id tuple in position
    order) so the result is deterministic.
 
-2. Once the 9 defensive assignments are fixed, sort players into batting
-   order slots by applying slot-specific reshuffling:
-   - Slot 1: highest OBP
-   - Slot 4: highest SLG
-   - Slot 3: highest OPS (balanced)
-   - Slots 2, 5-9: descending composite score for the remaining players.
+2. Once the 9 defensive assignments are fixed, order them into batting
+   slots by maximising expected runs via pairwise-swap hill climbing
+   (run-expectancy optimizer), with a small handedness-streak penalty.
 
 3. Compute and return the LineupScoreBreakdown for the resulting lineup.
 """
 
 from __future__ import annotations
 
-from collections.abc import Callable
-
 from app.lineup_model.lineup_score import compute_lineup_score
 from app.lineup_model.player_score import compute_player_score
+from app.lineup_model.run_expectancy.optimizer import optimize_order
 from app.lineup_model.types import (
     Handedness,
     HitterStats,
@@ -136,66 +132,8 @@ def _assign_batting_order(
     assignments: dict[Position, HitterStats],
     opp_handedness: Handedness,
 ) -> list[LineupSlot]:
-    """Assign batting-order slots using slot-specific reshuffling.
-
-    Slot 1 -> highest OBP
-    Slot 4 -> highest SLG
-    Slot 3 -> highest OPS (season)
-    Remaining slots (2, 5, 6, 7, 8, 9) -> descending composite score
-    (using the player's own position for the score; ties by player_id).
-
-    Args:
-        assignments: Mapping from defensive position to chosen HitterStats.
-        opp_handedness: Opposing starter's handedness.
-
-    Returns:
-        List of LineupSlot (unsorted; callers may sort by batting_order).
-    """
-    players = list(assignments.items())  # [(position, stats), ...]
-
-    # Compute composite score for each player at their assigned position.
-    def composite(pos: Position, stats: HitterStats) -> float:
-        bd = compute_player_score(stats, pos, opp_handedness)
-        return bd.total_score if bd is not None else 0.0
-
-    remaining: list[tuple[Position, HitterStats]] = list(players)
-    slots: list[LineupSlot] = []
-
-    def pop_by_key(
-        key_fn: Callable[[Position, HitterStats], float],
-    ) -> tuple[Position, HitterStats]:
-        best_idx = 0
-        best_val: float | None = None
-        for i, (pos, st) in enumerate(remaining):
-            val = key_fn(pos, st)
-            if (
-                best_val is None
-                or val > best_val
-                or (val == best_val and st.player_id < remaining[best_idx][1].player_id)
-            ):
-                best_idx = i
-                best_val = val
-        return remaining.pop(best_idx)
-
-    # Slot 1 -- highest OBP
-    pos1, s1 = pop_by_key(lambda pos, st: st.obp)
-    slots.append(LineupSlot(batting_order=1, player_id=s1.player_id, position=pos1))
-
-    # Slot 4 -- highest SLG
-    pos4, s4 = pop_by_key(lambda pos, st: st.slg)
-    slots.append(LineupSlot(batting_order=4, player_id=s4.player_id, position=pos4))
-
-    # Slot 3 -- highest OPS (balanced)
-    pos3, s3 = pop_by_key(lambda pos, st: st.ops)
-    slots.append(LineupSlot(batting_order=3, player_id=s3.player_id, position=pos3))
-
-    # Remaining 6 slots (2, 5, 6, 7, 8, 9) -- descending composite
-    remaining_orders = [2, 5, 6, 7, 8, 9]
-    for order in remaining_orders:
-        pos_r, s_r = pop_by_key(lambda pos, st: composite(pos, st))
-        slots.append(LineupSlot(batting_order=order, player_id=s_r.player_id, position=pos_r))
-
-    return slots
+    """Order the assigned 9 by maximising run expectancy (deterministic)."""
+    return optimize_order(assignments, opp_handedness)
 
 
 def generate_recommendation(
