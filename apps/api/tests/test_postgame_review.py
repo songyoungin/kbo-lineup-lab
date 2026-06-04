@@ -335,9 +335,9 @@ def _review_with_gap_and_outcomes(
 
 def test_summary_template_weak_pregame_over() -> None:
     """Template 1: weak pregame → overperformers → 'weaker than rec, but exceeded'."""
-    # Gap = -8 (questionable) and actual player overperformed (HR = 4 pts)
+    # Gap = -0.6 run (questionable) and actual player overperformed (HR = 4 pts)
     breakdown = _review_with_gap_and_outcomes(
-        gap=-8.0, over_count=1, under_count=0, actual_choice_succeeded=True
+        gap=-0.6, over_count=1, under_count=0, actual_choice_succeeded=True
     )
     assert "weaker than the recommendation" in breakdown.summary_text
     assert "exceeded expectations" in breakdown.summary_text
@@ -345,9 +345,9 @@ def test_summary_template_weak_pregame_over() -> None:
 
 def test_summary_template_weak_pregame_under() -> None:
     """Template 2: weak pregame → underperformers → 'model disliked... also underperformed'."""
-    # Gap = -8 (questionable) and actual player underperformed (3 SO = -1.5 pts)
+    # Gap = -0.6 run (questionable) and actual player underperformed (3 SO = -1.5 pts)
     breakdown = _review_with_gap_and_outcomes(
-        gap=-8.0, over_count=0, under_count=1, actual_choice_succeeded=False
+        gap=-0.6, over_count=0, under_count=1, actual_choice_succeeded=False
     )
     assert "model disliked" in breakdown.summary_text
     assert "underperformed" in breakdown.summary_text
@@ -400,33 +400,33 @@ def test_summary_template_close_to_optimal() -> None:
 
 
 def test_gap_label_nearly_optimal() -> None:
-    """Gap >= -2.0 → 'nearly optimal'."""
+    """Gap >= -0.15 run (incl. batting-order-only diffs) → 'nearly optimal'."""
     from app.postgame.review_generator import _pick_gap_label
 
-    assert _pick_gap_label(-1.0) == "nearly optimal"
-    assert _pick_gap_label(-2.0) == "nearly optimal"
+    assert _pick_gap_label(-0.10) == "nearly optimal"
+    assert _pick_gap_label(-0.15) == "nearly optimal"
     assert _pick_gap_label(0.0) == "nearly optimal"
 
 
 def test_gap_label_acceptable() -> None:
-    """Gap in [-5.0, -2.0) → 'acceptable'."""
+    """Gap in [-0.40, -0.15) → 'acceptable'."""
     from app.postgame.review_generator import _pick_gap_label
 
-    assert _pick_gap_label(-3.0) == "acceptable"
-    assert _pick_gap_label(-5.0) == "acceptable"
+    assert _pick_gap_label(-0.20) == "acceptable"
+    assert _pick_gap_label(-0.40) == "acceptable"
 
 
 def test_gap_label_questionable() -> None:
-    """Gap in [-10.0, -5.0) → 'questionable'."""
+    """Gap in [-0.80, -0.40) → 'questionable'."""
     from app.postgame.review_generator import _pick_gap_label
 
-    assert _pick_gap_label(-7.0) == "questionable"
-    assert _pick_gap_label(-10.0) == "questionable"
+    assert _pick_gap_label(-0.50) == "questionable"
+    assert _pick_gap_label(-0.80) == "questionable"
 
 
 def test_gap_label_low_offensive_efficiency() -> None:
-    """Gap < -10.0 → 'low offensive efficiency'."""
+    """Gap < -0.80 run → 'low offensive efficiency'."""
     from app.postgame.review_generator import _pick_gap_label
 
-    assert _pick_gap_label(-11.0) == "low offensive efficiency"
-    assert _pick_gap_label(-100.0) == "low offensive efficiency"
+    assert _pick_gap_label(-0.81) == "low offensive efficiency"
+    assert _pick_gap_label(-2.0) == "low offensive efficiency"

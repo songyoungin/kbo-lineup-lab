@@ -8,6 +8,7 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from typing import NamedTuple
 
+from app.lineup_model.gap_verdict import GapTier, classify_gap
 from app.postgame.performance_score import classify_performance, compute_performance_score
 from app.postgame.types import (
     DifferenceReview,
@@ -16,13 +17,9 @@ from app.postgame.types import (
     PostgameReviewBreakdown,
 )
 
-# ---------------------------------------------------------------------------
-# Gap label thresholds (pregame score gap = actual_score - recommended_score)
-# Negative means actual lineup was weaker than recommendation.
-# ---------------------------------------------------------------------------
-_GAP_NEARLY_OPTIMAL = -2.0
-_GAP_ACCEPTABLE = -5.0
-_GAP_QUESTIONABLE = -10.0
+# Band boundaries for the pregame score gap (actual - recommended, in expected
+# runs) are owned by app.lineup_model.gap_verdict so this label and the pregame
+# verdict can never disagree for the same gap.
 
 # Minimum absolute performance score delta to declare "succeeded" vs "comparable"
 _PERF_DELTA_THRESHOLD = 1.0
@@ -51,6 +48,14 @@ class BoxLineEntry(NamedTuple):
     box_line: dict[str, object]
 
 
+_LABEL_BY_TIER: dict[GapTier, str] = {
+    GapTier.NEARLY_OPTIMAL: "nearly optimal",
+    GapTier.ACCEPTABLE: "acceptable",
+    GapTier.QUESTIONABLE: "questionable",
+    GapTier.LOW: "low offensive efficiency",
+}
+
+
 def _pick_gap_label(gap: float) -> str:
     """Map the pregame score gap to a human-readable label.
 
@@ -58,15 +63,9 @@ def _pick_gap_label(gap: float) -> str:
         gap: pregame_actual_score - pregame_recommended_score.
 
     Returns:
-        Label string per design thresholds.
+        Label string per the shared gap-verdict thresholds.
     """
-    if gap >= _GAP_NEARLY_OPTIMAL:
-        return "nearly optimal"
-    if gap >= _GAP_ACCEPTABLE:
-        return "acceptable"
-    if gap >= _GAP_QUESTIONABLE:
-        return "questionable"
-    return "low offensive efficiency"
+    return _LABEL_BY_TIER[classify_gap(gap)]
 
 
 def _build_difference_review(

@@ -7,6 +7,8 @@ from typing import Annotated, Literal
 
 from pydantic import AfterValidator, BaseModel, ConfigDict
 
+from app.lineup_model.gap_verdict import GapTier, classify_gap
+
 
 def _require_tz(dt: datetime) -> datetime:
     """Reject naive datetimes at Pydantic validation time."""
@@ -19,13 +21,10 @@ TzAwareDatetime = Annotated[datetime, AfterValidator(_require_tz)]
 
 # ---------------------------------------------------------------------------
 # Verdict thresholds
-# Scores live in rate-stat space (~0.6–1.0). The gap is actual - recommended
-# (negative = manager chose a worse lineup than the model recommends).
-#
-#   gap >= -0.02  → "Nearly optimal"   (within 2 % of recommended)
-#   -0.05 .. -0.02 → "Acceptable"      (small but non-trivial gap)
-#   -0.10 .. -0.05 → "Questionable"    (meaningful optimisation left on table)
-#   < -0.10        → "Low offensive efficiency"  (significant divergence)
+# Scores live in run-expectancy space (full-game expected runs, ~4-6). The gap
+# is actual - recommended (negative = manager chose a worse lineup than the
+# model recommends). The band boundaries are owned by app.lineup_model.gap_verdict
+# so the pregame verdict and the postgame gap label can never disagree.
 # ---------------------------------------------------------------------------
 
 VERDICT_NEARLY_OPTIMAL = "Nearly optimal"
@@ -41,6 +40,14 @@ VerdictLiteral = Literal[
 ]
 
 
+_VERDICT_BY_TIER: dict[GapTier, VerdictLiteral] = {
+    GapTier.NEARLY_OPTIMAL: "Nearly optimal",
+    GapTier.ACCEPTABLE: "Acceptable",
+    GapTier.QUESTIONABLE: "Questionable",
+    GapTier.LOW: "Low offensive efficiency",
+}
+
+
 def derive_verdict(score_gap: float) -> VerdictLiteral:
     """Map actual-minus-recommended gap to a human-readable verdict string.
 
@@ -50,13 +57,7 @@ def derive_verdict(score_gap: float) -> VerdictLiteral:
     Returns:
         One of the four verdict strings.
     """
-    if score_gap >= -0.02:
-        return "Nearly optimal"
-    if score_gap >= -0.05:
-        return "Acceptable"
-    if score_gap >= -0.10:
-        return "Questionable"
-    return "Low offensive efficiency"
+    return _VERDICT_BY_TIER[classify_gap(score_gap)]
 
 
 # ---------------------------------------------------------------------------
