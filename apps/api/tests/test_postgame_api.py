@@ -759,3 +759,24 @@ def test_generate_review_persists_korean_narrative(
         )
         assert summary.narrative is not None
         assert summary.narrative.startswith("모델은 이날 실제 라인업을")
+
+
+def test_postgame_get_returns_narrative(
+    client: TestClient,
+    _evaluation_run_id: int,
+    _box_score_snapshot_id: int,
+    _game_id: int,
+) -> None:
+    """GET /api/games/{id}/postgame returns a non-empty Korean narrative."""
+    client.post(
+        "/api/jobs/generate-postgame-review",
+        json={
+            "evaluation_run_id": _evaluation_run_id,
+            "box_score_snapshot_id": _box_score_snapshot_id,
+        },
+    )
+    resp = client.get(f"/api/games/{_game_id}/postgame")
+    assert resp.status_code == 200, resp.text
+    narrative = resp.json()["narrative"]
+    assert isinstance(narrative, str)
+    assert narrative.startswith("모델은 이날 실제 라인업을")
