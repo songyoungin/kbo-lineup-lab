@@ -35,6 +35,10 @@ jobs:
       LINEUP_LLM_MODEL: gpt-5.5
       # gpt-5.5 reasoning runs take ~30s; keep well above to avoid silent fallback.
       LINEUP_LLM_TIMEOUT_S: "60"
+      # Postgame storytelling narrative: same gpt-5.5 model, best-effort.
+      POSTGAME_NARRATIVE_ENABLED: "true"
+      POSTGAME_NARRATIVE_MODEL: gpt-5.5
+      POSTGAME_NARRATIVE_TIMEOUT_S: "60"
     steps:
       - uses: actions/checkout@v6.0.2
 
