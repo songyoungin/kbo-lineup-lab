@@ -47,4 +47,5 @@ def test_jobs_route_401_without_token(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_games_route_stays_public(monkeypatch: pytest.MonkeyPatch) -> None:
     """Read endpoints are not behind the guard even when the env is set."""
     monkeypatch.setenv("KBO_ADMIN_TOKEN", "sekrit")
-    assert client.get("/api/games/999999/pregame").status_code != 401
+    res = client.get("/api/games/999999/pregame")
+    assert res.status_code == 404, f"expected 404 (not guarded), got {res.status_code}"

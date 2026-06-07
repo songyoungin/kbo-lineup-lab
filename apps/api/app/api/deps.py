@@ -36,4 +36,9 @@ def require_api_token(
     if not expected:
         return
     if x_api_token is None or not secrets.compare_digest(x_api_token, expected):
-        raise HTTPException(status_code=401, detail="Invalid or missing API token")
+        # WWW-Authenticate is required on 401 responses by RFC 7235.
+        raise HTTPException(
+            status_code=401,
+            detail="Invalid or missing API token",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
