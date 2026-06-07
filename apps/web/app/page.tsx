@@ -86,6 +86,25 @@ const RECENT_COLUMNS: Column<RecentGameSummary>[] = [
         <span className="text-xs text-zinc-400">-</span>
       ),
   },
+  {
+    header: "리포트",
+    accessor: (row) => (
+      <div className="flex gap-3 text-xs font-semibold">
+        <Link
+          href={`/games/${row.game_id}/pregame`}
+          className="text-brand-600 transition-colors hover:text-brand-700 hover:underline"
+        >
+          프리게임
+        </Link>
+        <Link
+          href={`/games/${row.game_id}/postgame`}
+          className="text-brand-600 transition-colors hover:text-brand-700 hover:underline"
+        >
+          포스트게임
+        </Link>
+      </div>
+    ),
+  },
 ];
 
 export default async function TeamHomePage() {

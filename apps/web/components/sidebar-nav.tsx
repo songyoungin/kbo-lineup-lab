@@ -13,7 +13,8 @@ interface NavItem {
   match: (pathname: string) => boolean;
 }
 
-// MVP: game-scoped links point at fixture game id 1; a real game picker is TODO.
+// Game-scoped links go through /games/latest/*, which redirects to the
+// team's most recent game.
 const NAV_ITEMS: NavItem[] = [
   {
     href: "/",
@@ -22,13 +23,13 @@ const NAV_ITEMS: NavItem[] = [
     match: (p) => p === "/",
   },
   {
-    href: "/games/1/pregame",
+    href: "/games/latest/pregame",
     label: "프리게임 평가",
     icon: ClipboardList,
     match: (p) => p.endsWith("/pregame"),
   },
   {
-    href: "/games/1/postgame",
+    href: "/games/latest/postgame",
     label: "포스트게임 리뷰",
     icon: ListChecks,
     match: (p) => p.endsWith("/postgame"),
