@@ -25,6 +25,16 @@ export class ApiError extends Error {
   }
 }
 
+/**
+ * Server-only auth header for admin/jobs endpoints. KBO_ADMIN_TOKEN is not
+ * NEXT_PUBLIC_, so it is undefined in the browser bundle and the header is
+ * simply omitted there (and in local dev where the API guard is off).
+ */
+function adminHeaders(): HeadersInit {
+  const token = process.env.KBO_ADMIN_TOKEN;
+  return token ? { "x-api-token": token } : {};
+}
+
 export async function apiGet<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(`${API_BASE}${path}`, {
     ...init,
@@ -88,11 +98,13 @@ export const api = {
 
   adminIngestionRuns: (limit = 50) =>
     apiGet<IngestionRunListResponse>(
-      `/api/admin/ingestion-runs?limit=${limit}`
+      `/api/admin/ingestion-runs?limit=${limit}`,
+      { headers: adminHeaders() }
     ),
 
   adminGameIngestionStatus: (gameId: number) =>
     apiGet<GameIngestionStatusResponse>(
-      `/api/admin/games/${gameId}/ingestion-status`
+      `/api/admin/games/${gameId}/ingestion-status`,
+      { headers: adminHeaders() }
     ),
 };
