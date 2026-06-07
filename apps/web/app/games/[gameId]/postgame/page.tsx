@@ -99,6 +99,9 @@ export default async function PostgamePage({
         <ResultSummary review={review} />
       </section>
 
+      {/* 헤드라인 내러티브 — 리드 스토리 */}
+      <NarrativeStory text={review.narrative} />
+
       {/* 기대 이상 / 이하 선수 목록 */}
       <section>
         <h2 className="mb-3 text-xs font-bold uppercase tracking-wider text-zinc-400">
@@ -132,9 +135,6 @@ export default async function PostgamePage({
           <ChoiceReviewGroups reviews={review.difference_reviews} />
         </section>
       )}
-
-      {/* 헤드라인 내러티브 */}
-      <NarrativeStory text={review.narrative} />
 
       {/* 종합 평가 (자연어 요약) */}
       <SummaryText text={review.summary_text} />
