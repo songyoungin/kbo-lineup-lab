@@ -23,6 +23,9 @@ RUN uv sync --frozen --no-dev --package kbo-lineup-lab-api
 
 ENV PATH="/srv/.venv/bin:$PATH"
 
+RUN useradd --system --uid 1001 appuser
+USER appuser
+
 WORKDIR /srv/apps/api
 
 # Cloud Run injects PORT (defaults to 8080).
