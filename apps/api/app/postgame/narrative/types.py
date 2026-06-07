@@ -7,7 +7,7 @@ from typing import Protocol
 
 from pydantic import BaseModel, ConfigDict
 
-from app.postgame.types import PostgameReviewBreakdown
+from app.postgame.types import PlayerPerformance, PostgameReviewBreakdown
 
 
 def _name(names: Mapping[int, str], player_id: int) -> str:
@@ -56,12 +56,12 @@ class NarrativeFacts(BaseModel):
     ) -> NarrativeFacts:
         """Project a PostgameReviewBreakdown into name-resolved narrative facts."""
 
-        def line(perf: object) -> NarrativePlayerLine:
+        def line(perf: PlayerPerformance) -> NarrativePlayerLine:
             return NarrativePlayerLine(
-                name=_name(names, perf.player_id),  # type: ignore[attr-defined]
-                performance_score=perf.performance_score,  # type: ignore[attr-defined]
-                label=str(perf.label),  # type: ignore[attr-defined]
-                box_line=dict(perf.box_line),  # type: ignore[attr-defined]
+                name=_name(names, perf.player_id),
+                performance_score=perf.performance_score,
+                label=str(perf.label),
+                box_line=dict(perf.box_line),
             )
 
         diffs = tuple(
