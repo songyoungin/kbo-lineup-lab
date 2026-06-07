@@ -510,11 +510,11 @@ Run `/harness-audit`; then push `feature/cloud-deployment` and open the PR with 
 
 ---
 
-### Task 7: Manual deployment checklist (with the user)
+### Task 7: Deployment (Claude executes; user does the one-time auth)
 
-These steps need the user's personal GCP account (NOT the SOCAR SSO profiles) and their Vercel account. Run interactively, confirming each step.
+Claude runs these gcloud / Vercel CLI commands directly in the session. The user only performs the interactive auth steps: `gcloud auth login` with the personal Google account (NOT the SOCAR SSO profiles) and a Vercel login/token. Confirm each mutating command with the user before running. After a successful deploy, commit the working commands as `scripts/deploy/deploy_api.sh` and `scripts/deploy/README.md` for repeatability (no Terraform: tfstate would hold the secrets in plaintext, overkill at this scale).
 
-- [ ] **Step 1: GCP project + APIs** (`gcloud auth login` with the personal account first)
+- [ ] **Step 1: GCP project + APIs** (user runs `! gcloud auth login` first)
 
 ```bash
 gcloud config set project <PERSONAL_PROJECT_ID>
@@ -548,9 +548,9 @@ gcloud run deploy kbo-lineup-lab-api \
 
 Verify: `curl -s <RUN_URL>/health` → `{"status":"ok"}`; tokenless `curl <RUN_URL>/api/admin/ingestion-runs` → 401.
 
-- [ ] **Step 4: Deploy the web on Vercel**
+- [ ] **Step 4: Deploy the web on Vercel** (user provides a Vercel token or runs `! vercel login`)
 
-Vercel dashboard → Add New Project → import `songyoungin/kbo-lineup-lab` → Root Directory `apps/web` (framework auto-detected). Env vars (Production): `NEXT_PUBLIC_API_BASE_URL=<RUN_URL>`, `KBO_ADMIN_TOKEN=<token from Secret Manager>`. Deploy.
+Via Vercel CLI from `apps/web`: `vercel link` (create project `kbo-lineup-lab`), then set Production env vars `NEXT_PUBLIC_API_BASE_URL=<RUN_URL>` and `KBO_ADMIN_TOKEN=<token from Secret Manager>` with `vercel env add`, then `vercel deploy --prod`. (Dashboard import with Root Directory `apps/web` is the fallback if CLI linking misbehaves.)
 
 - [ ] **Step 5: Point CORS at the Vercel domain**
 
@@ -562,3 +562,7 @@ gcloud run services update kbo-lineup-lab-api --region asia-northeast3 \
 - [ ] **Step 6: End-to-end check**
 
 On the Vercel URL: team home renders real data; `/games/latest/pregame` redirects to the newest game; the pregame "선수 비교" client panel loads (proves CORS); `/admin/ingestion` renders (proves the server-side token path).
+
+- [ ] **Step 7: Commit the deploy scripts**
+
+Write the verified commands into `scripts/deploy/deploy_api.sh` (gcloud deploy + CORS update, parameterized by project/region/service) and `scripts/deploy/README.md` (one-time setup: auth, secrets, Vercel project + env vars). Commit on a `chore/` branch and PR as usual.
