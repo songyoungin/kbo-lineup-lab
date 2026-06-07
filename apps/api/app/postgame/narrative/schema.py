@@ -2,18 +2,15 @@
 
 from __future__ import annotations
 
-from typing import Any
-
-NARRATIVE_JSON_SCHEMA: dict[str, Any] = {
-    "type": "json_schema",
-    "json_schema": {
-        "name": "postgame_narrative",
-        "strict": True,
-        "schema": {
-            "type": "object",
-            "properties": {"narrative": {"type": "string"}},
-            "required": ["narrative"],
-            "additionalProperties": False,
-        },
+# Passed to OpenAI Chat Completions as the inner response_format json_schema
+# (OpenAIProvider.complete adds the {"type": "json_schema", "json_schema": ...} wrapper).
+NARRATIVE_JSON_SCHEMA: dict[str, object] = {
+    "name": "postgame_narrative",
+    "strict": True,
+    "schema": {
+        "type": "object",
+        "properties": {"narrative": {"type": "string"}},
+        "required": ["narrative"],
+        "additionalProperties": False,
     },
 }

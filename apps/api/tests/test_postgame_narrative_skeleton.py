@@ -103,6 +103,6 @@ def test_user_prompt_includes_named_facts() -> None:
 
 
 def test_schema_requires_narrative_string() -> None:
-    schema = NARRATIVE_JSON_SCHEMA["json_schema"]["schema"]
-    assert schema["properties"]["narrative"]["type"] == "string"
-    assert schema["required"] == ["narrative"]
+    schema = NARRATIVE_JSON_SCHEMA["schema"]
+    assert schema["properties"]["narrative"]["type"] == "string"  # type: ignore[index]
+    assert schema["required"] == ["narrative"]  # type: ignore[index]
