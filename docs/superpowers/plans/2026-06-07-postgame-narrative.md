@@ -442,7 +442,7 @@ def test_user_prompt_includes_named_facts() -> None:
 
 
 def test_schema_requires_narrative_string() -> None:
-    schema = NARRATIVE_JSON_SCHEMA["json_schema"]["schema"]
+    schema = NARRATIVE_JSON_SCHEMA["schema"]
     assert schema["properties"]["narrative"]["type"] == "string"
     assert schema["required"] == ["narrative"]
 ```
@@ -461,17 +461,18 @@ Expected: FAIL — `ModuleNotFoundError: No module named 'app.postgame.narrative
 
 from __future__ import annotations
 
+# Inner response_format json_schema (OpenAIProvider.complete adds the
+# {"type": "json_schema", "json_schema": ...} wrapper itself, exactly like
+# ORDER_JSON_SCHEMA). Do NOT pre-wrap here or the schema double-wraps and
+# OpenAI rejects every call.
 NARRATIVE_JSON_SCHEMA: dict[str, object] = {
-    "type": "json_schema",
-    "json_schema": {
-        "name": "postgame_narrative",
-        "strict": True,
-        "schema": {
-            "type": "object",
-            "properties": {"narrative": {"type": "string"}},
-            "required": ["narrative"],
-            "additionalProperties": False,
-        },
+    "name": "postgame_narrative",
+    "strict": True,
+    "schema": {
+        "type": "object",
+        "properties": {"narrative": {"type": "string"}},
+        "required": ["narrative"],
+        "additionalProperties": False,
     },
 }
 ```
