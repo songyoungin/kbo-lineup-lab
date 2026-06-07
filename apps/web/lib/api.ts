@@ -87,13 +87,15 @@ export const api = {
   replayEvaluation: (body: ReplayEvaluationRequest) =>
     apiPost<ReplayEvaluationRequest, ReplayEvaluationResponse>(
       "/api/jobs/replay-evaluation",
-      body
+      body,
+      { headers: adminHeaders() }
     ),
 
   generatePostgameReview: (body: GeneratePostgameReviewRequest) =>
     apiPost<GeneratePostgameReviewRequest, GeneratePostgameReviewResponse>(
       "/api/jobs/generate-postgame-review",
-      body
+      body,
+      { headers: adminHeaders() }
     ),
 
   adminIngestionRuns: (limit = 50) =>
