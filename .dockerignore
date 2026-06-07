@@ -1,0 +1,8 @@
+.git
+.venv
+**/node_modules
+**/.next
+**/__pycache__
+**/*.db
+docs
+postgame6-live.png
