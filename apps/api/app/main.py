@@ -1,9 +1,10 @@
 import os
 
-from fastapi import APIRouter, FastAPI
+from fastapi import APIRouter, Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app import models as _models  # noqa: F401 — registers all ORM models with Base.metadata
+from app.api.deps import require_api_token
 from app.api.routes import admin, games, jobs, team
 
 # Local web dev server origins (IPv4/IPv6 variants). Client components fetch
@@ -40,6 +41,16 @@ def health() -> dict[str, str]:
 api_v1 = APIRouter(prefix="/api")
 api_v1.include_router(team.router, prefix="/team", tags=["team"])
 api_v1.include_router(games.router, prefix="/games", tags=["games"])
-api_v1.include_router(jobs.router, prefix="/jobs", tags=["jobs"])
-api_v1.include_router(admin.router, prefix="/admin", tags=["admin"])
+api_v1.include_router(
+    jobs.router,
+    prefix="/jobs",
+    tags=["jobs"],
+    dependencies=[Depends(require_api_token)],
+)
+api_v1.include_router(
+    admin.router,
+    prefix="/admin",
+    tags=["admin"],
+    dependencies=[Depends(require_api_token)],
+)
 app.include_router(api_v1)
