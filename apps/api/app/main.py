@@ -1,20 +1,30 @@
+import os
+
 from fastapi import APIRouter, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app import models as _models  # noqa: F401 — registers all ORM models with Base.metadata
 from app.api.routes import admin, games, jobs, team
 
+# Local web dev server origins (IPv4/IPv6 variants). Client components fetch
+# the API cross-origin, which the browser blocks without CORS headers.
+_DEFAULT_CORS_ORIGINS = "http://localhost:3000,http://127.0.0.1:3000"
+
+
+def cors_origins() -> list[str]:
+    """Return browser origins allowed by CORS.
+
+    Reads KBO_CORS_ORIGINS (comma-separated) or falls back to the local dev defaults.
+    """
+    raw = os.environ.get("KBO_CORS_ORIGINS") or _DEFAULT_CORS_ORIGINS
+    return [origin.strip() for origin in raw.split(",") if origin.strip()]
+
+
 app = FastAPI(title="KBO Lineup Lab API")
 
-# Allow the local web dev server (and its IPv4/IPv6 variants) to call the API
-# from the browser. Client components fetch the API cross-origin (web :3000 ->
-# api :8000), which the browser blocks without these headers.
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:3000",
-        "http://127.0.0.1:3000",
-    ],
+    allow_origins=cors_origins(),
     allow_methods=["*"],
     allow_headers=["*"],
 )
