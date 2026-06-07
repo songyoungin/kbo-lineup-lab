@@ -23,7 +23,7 @@ export function ScoreCard({
   return (
     <div
       className={cn(
-        "rounded-xl border border-l-4 border-zinc-200/80 bg-surface p-4 shadow-sm",
+        "rounded-md border border-l-4 border-rule bg-surface p-4",
         ACCENT_CLASSES[tone]
       )}
     >

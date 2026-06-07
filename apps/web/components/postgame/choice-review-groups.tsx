@@ -28,15 +28,13 @@ export function ChoiceReviewGroups({
       {groups.map((group) => (
         <div
           key={group.key}
-          className="overflow-hidden rounded-xl border border-zinc-200/80 bg-surface shadow-sm"
+          className="overflow-hidden rounded-md border border-rule bg-surface"
         >
-          <header className="flex items-center justify-between border-b border-zinc-100 px-4 py-2.5">
-            <span className="text-sm font-semibold text-ink">
-              {group.label}
-            </span>
+          <header className="flex items-center justify-between border-b border-rule px-4 py-2.5">
+            <span className="text-sm font-bold text-ink">{group.label}</span>
             <StatusPill tone={group.tone}>{group.items.length}</StatusPill>
           </header>
-          <ul className="divide-y divide-zinc-100">
+          <ul className="divide-y divide-rule/60">
             {group.items.map((review) => (
               <li key={review.batting_order} className="space-y-1.5 px-4 py-3">
                 <div className="flex items-center gap-2 text-sm">

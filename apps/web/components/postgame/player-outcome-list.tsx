@@ -38,9 +38,9 @@ function formatBoxLine(boxLine: Record<string, unknown>): string {
 /** 선수가 없을 때 보여주는 빈 상태 카드 */
 function EmptyCard({ title, message }: { title: string; message: string }) {
   return (
-    <div className="rounded-xl border border-zinc-200/80 bg-surface shadow-sm">
-      <header className="border-b border-zinc-100 px-4 py-2.5">
-        <span className="text-sm font-semibold text-ink">{title}</span>
+    <div className="rounded-md border border-rule bg-surface">
+      <header className="border-b border-rule px-4 py-2.5">
+        <span className="text-sm font-bold text-ink">{title}</span>
       </header>
       <p className="px-4 py-5 text-center text-xs text-zinc-400">{message}</p>
     </div>
@@ -64,12 +64,12 @@ export function PlayerOutcomeList({
   }
 
   return (
-    <div className="rounded-xl border border-zinc-200/80 bg-surface shadow-sm">
-      <header className="flex items-center justify-between border-b border-zinc-100 px-4 py-2.5">
-        <span className="text-sm font-semibold text-ink">{title}</span>
+    <div className="rounded-md border border-rule bg-surface">
+      <header className="flex items-center justify-between border-b border-rule px-4 py-2.5">
+        <span className="text-sm font-bold text-ink">{title}</span>
         <StatusPill tone={tone}>{players.length}명</StatusPill>
       </header>
-      <ul className="divide-y divide-zinc-100">
+      <ul className="divide-y divide-rule/60">
         {players.map((p) => (
           <li
             key={p.player_id}

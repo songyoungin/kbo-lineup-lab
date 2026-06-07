@@ -2,6 +2,7 @@ import { ApiError, api } from "@/lib/api";
 import type { IngestionRunSummary } from "@/lib/types";
 import { DataTable, type Column } from "@/components/data-table";
 import { StatusPill } from "@/components/status-pill";
+import { SectionHeading } from "@/components/section-heading";
 import { IngestionStatusTable } from "@/components/admin/ingestion-status-table";
 
 // MVP: 픽스처 게임 ID(1)로 직접 요청 — 실제 게임 선택 UI는 추후 추가
@@ -26,14 +27,12 @@ const RUN_COLUMNS: Column<IngestionRunSummary>[] = [
   {
     header: "ID",
     align: "right",
-    accessor: (row) => <span className="font-mono text-xs">{row.id}</span>,
+    accessor: (row) => <span className="text-xs">{row.id}</span>,
   },
   {
     header: "소스",
     accessor: (row) => (
-      <span className="font-mono text-xs text-zinc-600 break-all">
-        {row.source}
-      </span>
+      <span className="text-xs text-zinc-600 break-all">{row.source}</span>
     ),
   },
   {
@@ -109,20 +108,18 @@ export default async function AdminIngestionPage() {
   return (
     <div className="max-w-5xl space-y-8">
       {/* 헤더 */}
-      <header>
-        <h1 className="text-2xl font-bold tracking-tight text-ink">
+      <header className="reveal">
+        <h1 className="text-3xl font-bold tracking-tight text-ink">
           파이프라인 수집 현황
         </h1>
-        <p className="mt-1 text-sm text-zinc-500">
+        <p className="mt-1.5 text-sm text-zinc-500">
           KBO 데이터 수집·정규화·분석 파이프라인 상태를 실시간으로 확인합니다.
         </p>
       </header>
 
       {/* 최근 수집 런 섹션 */}
-      <section className="space-y-3">
-        <h2 className="text-sm font-semibold text-zinc-700 uppercase tracking-wide">
-          최근 수집 런
-        </h2>
+      <section className="reveal reveal-1">
+        <SectionHeading>최근 수집 런</SectionHeading>
         {runsError ? (
           <div className="rounded-lg border border-rose-200 bg-rose-50 px-4 py-3 text-xs text-rose-700">
             수집 런 목록을 불러오지 못했습니다: {runsError}
@@ -138,13 +135,11 @@ export default async function AdminIngestionPage() {
       </section>
 
       {/* 게임별 수집 상태 섹션 */}
-      <section className="space-y-3">
+      <section className="reveal reveal-2 space-y-3">
         <div>
-          <h2 className="text-xs font-bold uppercase tracking-wider text-zinc-400">
-            게임별 수집 상태
-          </h2>
+          <SectionHeading className="mb-0">게임별 수집 상태</SectionHeading>
           {gameStatus && (
-            <p className="mt-1 text-xs text-zinc-400">
+            <p className="mt-1.5 text-xs tabular-nums text-zinc-400">
               Game #{gameStatus.game_id} · 외부 ID:{" "}
               {gameStatus.game_external_id} · {gameStatus.game_date}
             </p>

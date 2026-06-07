@@ -154,14 +154,14 @@ export function PlayerComparisonPanel({
 
   if (slots.length === 0) {
     return (
-      <div className="rounded-xl border border-zinc-200/80 bg-surface p-4 text-xs text-zinc-400 shadow-sm">
+      <div className="rounded-md border border-rule bg-surface p-4 text-xs text-zinc-400">
         비교할 차이 슬롯이 없습니다.
       </div>
     );
   }
 
   return (
-    <div className="divide-y divide-zinc-100 rounded-xl border border-zinc-200/80 bg-surface shadow-sm">
+    <div className="divide-y divide-rule/60 rounded-md border border-rule bg-surface">
       {/* 슬롯 선택 드롭다운 */}
       <div className="flex items-center gap-3 px-4 py-3">
         <label
@@ -174,7 +174,7 @@ export function PlayerComparisonPanel({
           id="slot-select"
           value={slot}
           onChange={(e) => setSlot(Number(e.target.value))}
-          className="rounded-lg border border-zinc-200 bg-white px-2.5 py-1 text-sm text-zinc-700 focus:border-brand-400 focus:outline-none focus:ring-2 focus:ring-brand-200"
+          className="rounded-md border border-rule bg-white px-2.5 py-1 text-sm text-zinc-700 focus:border-brand-400 focus:outline-none focus:ring-2 focus:ring-brand-200"
         >
           {slots.map((s) => (
             <option key={s} value={s}>
@@ -216,7 +216,7 @@ export function PlayerComparisonPanel({
             </div>
 
             {/* 스탯 비교 테이블 */}
-            <div className="divide-y divide-zinc-50 text-xs">
+            <div className="divide-y divide-rule/40 text-xs">
               {buildStatRows(data.actual, data.recommended).map((row) => (
                 <div key={row.label} className="grid grid-cols-3 gap-2 py-1.5">
                   <span className="text-zinc-500">{row.label}</span>

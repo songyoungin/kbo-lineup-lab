@@ -8,17 +8,20 @@ export default function PregameLoading() {
         <div className="h-4 w-24 bg-zinc-100 rounded" />
       </div>
 
-      {/* 점수 카드 스켈레톤 */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-        {[0, 1, 2].map((i) => (
-          <div
-            key={i}
-            className="rounded-md border border-zinc-200 p-4 space-y-2"
-          >
-            <div className="h-3 w-24 bg-zinc-200 rounded" />
-            <div className="h-8 w-16 bg-zinc-200 rounded" />
+      {/* 점수 대결(ScoreDuel) 스켈레톤 */}
+      <div className="rounded-md border border-rule bg-surface px-6 py-5 space-y-4">
+        <div className="flex items-end justify-between">
+          <div className="space-y-2">
+            <div className="h-3 w-20 bg-zinc-200 rounded" />
+            <div className="h-9 w-28 bg-zinc-200 rounded" />
           </div>
-        ))}
+          <div className="space-y-2 flex flex-col items-end">
+            <div className="h-3 w-20 bg-zinc-200 rounded" />
+            <div className="h-9 w-28 bg-zinc-200 rounded" />
+          </div>
+        </div>
+        <div className="h-1.5 w-full bg-zinc-100 rounded-full" />
+        <div className="mx-auto h-4 w-40 bg-zinc-100 rounded" />
       </div>
 
       {/* 테이블 스켈레톤 */}
