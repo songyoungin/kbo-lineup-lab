@@ -6,8 +6,15 @@ import type { DifferenceType, LineupComparisonRow } from "@/lib/types";
 const COLUMNS: Column<LineupComparisonRow>[] = [
   {
     header: "타순",
+    // 라인업 카드처럼 타순 번호를 원형 배지로 — 차이가 있는 슬롯만 크림슨.
     accessor: (row) => (
-      <span className="font-mono text-xs font-semibold text-zinc-600">
+      <span
+        className={
+          row.difference_type === "Same"
+            ? "inline-flex h-6 w-6 items-center justify-center rounded-full bg-ink/5 text-xs font-bold text-zinc-500"
+            : "inline-flex h-6 w-6 items-center justify-center rounded-full bg-brand-600 text-xs font-bold text-white"
+        }
+      >
         {row.batting_order}
       </span>
     ),

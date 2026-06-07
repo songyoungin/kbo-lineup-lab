@@ -54,10 +54,10 @@ export function SidebarNav() {
             href={href}
             aria-current={active ? "page" : undefined}
             className={cn(
-              "group relative flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors",
+              "group relative flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors",
               active
-                ? "bg-brand-50 text-brand-700"
-                : "text-zinc-600 hover:bg-zinc-100 hover:text-ink"
+                ? "bg-brand-50 font-bold text-brand-700"
+                : "text-zinc-600 hover:bg-ink/5 hover:text-ink"
             )}
           >
             {/* Active left accent bar in LG crimson */}

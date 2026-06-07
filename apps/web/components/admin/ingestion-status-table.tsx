@@ -21,7 +21,7 @@ const COLUMNS: Column<CategoryStatusResponse>[] = [
     align: "right",
     accessor: (row) =>
       row.raw_payload_id != null ? (
-        <span className="font-mono text-xs">{row.raw_payload_id}</span>
+        <span className="text-xs">{row.raw_payload_id}</span>
       ) : (
         <span className="text-zinc-300">—</span>
       ),
@@ -31,7 +31,7 @@ const COLUMNS: Column<CategoryStatusResponse>[] = [
     align: "right",
     accessor: (row) =>
       row.snapshot_id != null ? (
-        <span className="font-mono text-xs">{row.snapshot_id}</span>
+        <span className="text-xs">{row.snapshot_id}</span>
       ) : (
         <span className="text-zinc-300">—</span>
       ),
@@ -41,7 +41,7 @@ const COLUMNS: Column<CategoryStatusResponse>[] = [
     align: "right",
     accessor: (row) =>
       row.run_id != null ? (
-        <span className="font-mono text-xs">{row.run_id}</span>
+        <span className="text-xs">{row.run_id}</span>
       ) : (
         <span className="text-zinc-300">—</span>
       ),

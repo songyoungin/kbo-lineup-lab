@@ -5,6 +5,7 @@ import type { TeamHomeGameCard, TeamHomeResponse } from "@/lib/types";
 import { ScoreCard } from "@/components/score-card";
 import { StatusPill } from "@/components/status-pill";
 import { DataTable, type Column } from "@/components/data-table";
+import { SectionHeading } from "@/components/section-heading";
 import type { StatusTone } from "@/components/status-pill";
 import type { AdminCategoryStatus, RecentGameSummary } from "@/lib/types";
 import {
@@ -114,41 +115,41 @@ export default async function TeamHomePage() {
       )}
 
       {/* Page header */}
-      <div className="flex items-center gap-3">
+      <div className="reveal flex items-center gap-3">
         <div>
-          <h1 className="text-2xl font-bold tracking-tight text-ink">
+          <h1 className="text-3xl font-bold tracking-tight text-ink">
             LG 트윈스 팀 홈
           </h1>
-          <p className="mt-1 text-sm text-zinc-500">
+          <p className="mt-1.5 text-sm text-zinc-500">
             라인업 평가와 파이프라인 현황을 한눈에
           </p>
         </div>
-        <span className="ml-auto rounded-full bg-brand-50 px-3 py-1 text-xs font-bold tracking-wide text-brand-700 ring-1 ring-inset ring-brand-200">
+        <span className="ml-auto rounded-sm bg-brand-50 px-3 py-1 text-xs font-bold tracking-wide text-brand-700 ring-1 ring-inset ring-brand-200">
           {home.team_code}
         </span>
       </div>
 
       {/* Today's game hero card */}
       {today ? (
-        <section className="space-y-4">
-          <h2 className="text-xs font-bold uppercase tracking-wider text-zinc-400">
-            오늘의 경기
-          </h2>
-          <div className="overflow-hidden rounded-2xl border border-zinc-200/80 bg-surface shadow-sm">
+        <section className="reveal reveal-1">
+          <SectionHeading>오늘의 경기</SectionHeading>
+          <div className="overflow-hidden rounded-md border border-rule bg-surface">
             {/* Crimson matchup banner */}
             <div className="flex items-center justify-between gap-4 bg-gradient-to-r from-brand-700 to-brand-600 px-6 py-5 text-white">
               <div>
                 <div className="flex items-center gap-2.5">
-                  <p className="text-2xl font-extrabold tracking-tight">
+                  <p className="text-2xl font-bold tracking-tight">
                     {teamNameKo(home.team_code)}{" "}
                     {isPlayed(today) ? (
-                      <span className="tabular-nums">
+                      <span className="text-3xl font-bold tabular-nums">
                         {today.team_score}
-                        <span className="px-1.5 text-brand-200">:</span>
+                        <span className="px-1.5 text-2xl text-brand-200">
+                          :
+                        </span>
                         {today.opponent_score}
                       </span>
                     ) : (
-                      <span className="text-brand-200">vs</span>
+                      <span className="italic text-brand-200">vs</span>
                     )}{" "}
                     {teamNameKo(today.opponent_team_code)}
                   </p>
@@ -176,7 +177,7 @@ export default async function TeamHomePage() {
                   </p>
                 )}
               </div>
-              <span className="shrink-0 self-start rounded-full bg-white/15 px-3 py-1 text-xs font-semibold backdrop-blur">
+              <span className="shrink-0 self-start rounded-sm bg-white/15 px-3 py-1 text-xs font-semibold tabular-nums backdrop-blur">
                 Game #{today.game_id}
               </span>
             </div>
@@ -185,13 +186,13 @@ export default async function TeamHomePage() {
             <div className="flex flex-wrap gap-2.5 px-6 py-4">
               <Link
                 href={`/games/${today.game_id}/pregame`}
-                className="inline-flex items-center gap-1.5 rounded-lg bg-brand-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-brand-700"
+                className="inline-flex items-center gap-1.5 rounded-md bg-brand-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-brand-700"
               >
                 프리게임 평가
               </Link>
               <Link
                 href={`/games/${today.game_id}/postgame`}
-                className="inline-flex items-center gap-1.5 rounded-lg border border-zinc-200 bg-white px-4 py-2 text-sm font-semibold text-zinc-700 transition-colors hover:border-zinc-300 hover:bg-zinc-50"
+                className="inline-flex items-center gap-1.5 rounded-md border border-rule bg-white px-4 py-2 text-sm font-semibold text-zinc-700 transition-colors hover:border-zinc-300 hover:bg-zinc-50"
               >
                 포스트게임 리뷰
               </Link>
@@ -199,11 +200,9 @@ export default async function TeamHomePage() {
           </div>
         </section>
       ) : (
-        <section className="space-y-3">
-          <h2 className="text-xs font-bold uppercase tracking-wider text-zinc-400">
-            오늘의 경기
-          </h2>
-          <div className="rounded-2xl border border-dashed border-zinc-300 bg-surface px-6 py-10 text-center text-sm text-zinc-400">
+        <section className="reveal reveal-1">
+          <SectionHeading>오늘의 경기</SectionHeading>
+          <div className="rounded-md border border-dashed border-rule bg-surface px-6 py-10 text-center text-sm text-zinc-400">
             오늘 예정된 경기가 없습니다.
           </div>
         </section>
@@ -211,10 +210,8 @@ export default async function TeamHomePage() {
 
       {/* Pipeline status grid — shown only when today's game exists */}
       {today && (
-        <section className="space-y-4">
-          <h2 className="text-xs font-bold uppercase tracking-wider text-zinc-400">
-            파이프라인 상태
-          </h2>
+        <section className="reveal reveal-2">
+          <SectionHeading>파이프라인 상태</SectionHeading>
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
             {Object.entries(today.pipeline_status).map(([step, status]) => (
               <ScoreCard
@@ -229,10 +226,8 @@ export default async function TeamHomePage() {
       )}
 
       {/* Recent games table */}
-      <section className="space-y-4">
-        <h2 className="text-xs font-bold uppercase tracking-wider text-zinc-400">
-          최근 경기
-        </h2>
+      <section className="reveal reveal-3">
+        <SectionHeading>최근 경기</SectionHeading>
         <DataTable<RecentGameSummary>
           columns={RECENT_COLUMNS}
           rows={recent}

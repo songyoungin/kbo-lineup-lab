@@ -1,12 +1,13 @@
 @import "tailwindcss";
 
 /*
- * LG Twins Lineup Lab — light theme with a crimson brand accent.
- * Brand colour tokens are exposed to Tailwind v4 via a single @theme block so
- * components can use utilities like `bg-brand-600`, `text-brand-700`,
- * `border-brand-200`. Keep this as ONE @theme block: under Next/Turbopack a
- * second @theme at-rule caused the whole custom theme to be dropped on a clean
- * build (brand/canvas/font tokens silently missing).
+ * LG Twins Lineup Lab — "sports editorial" light theme.
+ * Warm paper canvas, ink-black type, LG crimson accents, newspaper rules.
+ * Tokens are exposed to Tailwind v4 via a single @theme block so components
+ * can use utilities like `bg-brand-600` and `border-rule`. Keep this as
+ * ONE @theme block: under Next/Turbopack a second @theme at-rule
+ * caused the whole custom theme to be dropped on a clean build
+ * (brand/canvas/font tokens silently missing).
  */
 
 @theme {
@@ -23,16 +24,18 @@
   --color-brand-900: #730c37;
   --color-brand-950: #45011c;
 
-  /* Ink — near-black navy for headings/body, crisper than zinc-900 */
-  --color-ink: #15161b;
+  /* Ink — warm near-black, like newsprint ink */
+  --color-ink: #1a1714;
 
-  /* App surfaces */
-  --color-canvas: #f7f7f9;
-  --color-surface: #ffffff;
+  /* App surfaces — warm paper canvas, warm-white cards */
+  --color-canvas: #f8f6f1;
+  --color-surface: #fffdf8;
 
-  /* Fonts (Geist via next/font; the CSS vars are set on <html>) */
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+  /* Newspaper hairline rule */
+  --color-rule: #ddd7ca;
+
+  /* Single typeface (loaded via next/font; the CSS var is set on <html>) */
+  --font-sans: var(--font-plex-sans-kr);
 }
 
 :root {
@@ -44,4 +47,70 @@ body {
   background: var(--background);
   color: var(--foreground);
   @apply antialiased;
+}
+
+/* Vertical pinstripe texture (LG home uniform), kept near-subliminal. */
+.pinstripe {
+  background-image: repeating-linear-gradient(
+    90deg,
+    transparent 0,
+    transparent 7px,
+    rgba(26, 23, 20, 0.04) 7px,
+    rgba(26, 23, 20, 0.04) 8px
+  );
+}
+
+/* Newspaper double rule: thick ink line over a thin one (masthead divider). */
+.rule-double {
+  height: 6px;
+  border-top: 3px solid var(--color-ink);
+  border-bottom: 1px solid var(--color-ink);
+}
+
+/* Editorial drop cap for the lead paragraph (crimson initial). */
+.drop-cap::first-letter {
+  float: left;
+  font-size: 3.1em;
+  font-weight: 700;
+  line-height: 0.85;
+  padding-right: 0.14em;
+  color: var(--color-brand-600);
+}
+
+/* Staggered page-load reveal. Apply `reveal` plus an optional delay step. */
+@keyframes reveal {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.reveal {
+  animation: reveal 0.55s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.reveal-1 {
+  animation-delay: 70ms;
+}
+.reveal-2 {
+  animation-delay: 140ms;
+}
+.reveal-3 {
+  animation-delay: 210ms;
+}
+.reveal-4 {
+  animation-delay: 280ms;
+}
+.reveal-5 {
+  animation-delay: 350ms;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .reveal {
+    animation: none;
+  }
 }
