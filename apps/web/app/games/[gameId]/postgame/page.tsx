@@ -26,6 +26,21 @@ function ModelLimitations({ limitations }: { limitations: string[] }) {
   );
 }
 
+/** 헤드라인 내러티브 섹션 */
+function NarrativeStory({ text }: { text: string }) {
+  if (!text) return null;
+  return (
+    <section className="rounded-xl border border-zinc-200/80 bg-surface p-5 shadow-sm">
+      <h2 className="mb-2 text-xs font-bold uppercase tracking-wider text-zinc-400">
+        오늘의 이야기
+      </h2>
+      <p className="text-base leading-relaxed text-zinc-700 whitespace-pre-line">
+        {text}
+      </p>
+    </section>
+  );
+}
+
 /** 자연어 요약 섹션 */
 function SummaryText({ text }: { text: string }) {
   if (!text) return null;
@@ -83,6 +98,9 @@ export default async function PostgamePage({
         </h2>
         <ResultSummary review={review} />
       </section>
+
+      {/* 헤드라인 내러티브 — 리드 스토리 */}
+      <NarrativeStory text={review.narrative} />
 
       {/* 기대 이상 / 이하 선수 목록 */}
       <section>

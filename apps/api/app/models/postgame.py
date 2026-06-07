@@ -68,6 +68,7 @@ class PostgameReviewSummary(Base):
         Integer, ForeignKey("postgame_review_runs.id"), nullable=False, unique=True
     )
     summary_text: Mapped[str] = mapped_column(Text, nullable=False)
+    narrative: Mapped[str | None] = mapped_column(Text, nullable=True)
     # Structured comparison data: predicted vs actual per player
     comparison_json: Mapped[dict[str, object] | None] = mapped_column(JSON, nullable=True)
     # Overall accuracy score if computable (0.0–1.0)

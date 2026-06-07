@@ -57,6 +57,7 @@ class PostgameResponse(BaseModel):
     other_actual: list[PostgamePlayerLine]
     difference_reviews: list[PostgameDifferenceReview]
     summary_text: str
+    narrative: str
     model_limitations: list[str]
 
 

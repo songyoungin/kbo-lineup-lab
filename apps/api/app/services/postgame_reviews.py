@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from collections.abc import Mapping
 from datetime import UTC, datetime
 
 from fastapi import HTTPException
@@ -26,13 +27,17 @@ from app.models.snapshot import (
     BoxScoreRow,
     BoxScoreSnapshot,
 )
+from app.postgame.narrative.generator import generate_narrative
+from app.postgame.narrative.provider import build_narrative_provider
+from app.postgame.narrative.skeleton import build_skeleton
+from app.postgame.narrative.types import NarrativeFacts
 from app.postgame.review_generator import (
     ActualLineupRow,
     BoxLineEntry,
     RecommendedRow,
     generate_postgame_review,
 )
-from app.postgame.types import PlayerPerformance
+from app.postgame.types import PlayerPerformance, PostgameReviewBreakdown
 from app.schemas.postgame import (
     GeneratePostgameReviewRequest,
     GeneratePostgameReviewResponse,
@@ -59,6 +64,17 @@ def _output_hash(breakdown_json: dict[str, object]) -> str:
     """Produce a stable SHA-256 fingerprint of a review breakdown."""
     canonical = json.dumps(breakdown_json, sort_keys=True, separators=(",", ":"), default=str)
     return hashlib.sha256(canonical.encode()).hexdigest()
+
+
+def _resolve_narrative(
+    stored: str | None,
+    breakdown: PostgameReviewBreakdown,
+    names: Mapping[int, str],
+) -> str:
+    """Return the stored narrative, or a freshly built skeleton for legacy NULL rows."""
+    if stored:
+        return stored
+    return build_skeleton(NarrativeFacts.from_breakdown(breakdown, names))
 
 
 def _to_player_line(perf: PlayerPerformance, name: str) -> PostgamePlayerLine:
@@ -302,13 +318,23 @@ def generate_review_for_run(
         player_names_by_id=name_map,
     )
 
+    # Narrative is presentational (best-effort LLM, deterministic Korean fallback);
+    # it is intentionally NOT part of output_hash.
+    facts = NarrativeFacts.from_breakdown(breakdown, name_map)
+    narrative, narrative_source = generate_narrative(facts, build_narrative_provider())
+
     # Persist summary (UNIQUE on review_run_id)
     summary = PostgameReviewSummary(
         review_run_id=run.id,
         summary_text=breakdown.summary_text,
         comparison_json=dict(breakdown.key_insights_json),
+        narrative=narrative,
     )
     session.add(summary)
+
+    model_config = dict(run.model_config_json or {})
+    model_config["narrative_source"] = narrative_source
+    run.model_config_json = model_config
 
     # Update run status
     run.status = "completed"
@@ -526,6 +552,8 @@ def build_postgame_view(
             )
         )
 
+    narrative = _resolve_narrative(summary.narrative, breakdown, name_map)
+
     return PostgameResponse(
         game_id=game_id,
         evaluation_run_id=eval_run.id,
@@ -539,6 +567,7 @@ def build_postgame_view(
         other_actual=[_line(p) for p in breakdown.other_actual],
         difference_reviews=difference_reviews_out,
         summary_text=breakdown.summary_text,
+        narrative=narrative,
         model_limitations=[
             "Performance score uses box score totals only; "
             "does not account for context (RISP, leverage, etc.)"

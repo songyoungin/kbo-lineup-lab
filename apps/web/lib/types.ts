@@ -187,6 +187,7 @@ export interface PostgameResponse {
   other_actual: PostgamePlayerLine[];
   difference_reviews: PostgameDifferenceReview[];
   summary_text: string;
+  narrative: string;
   model_limitations: string[];
 }
 
