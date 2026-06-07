@@ -3,7 +3,7 @@
 Covers every scoring rule in player_score.py:
 - season_offense formula
 - recent_form with full data, partial fallback, full fallback
-- matchup_score at each PA threshold boundary
+- matchup_score sample-size shrinkage toward season OPS
 - position_fit for primary / secondary / recent / impossible
 - start_rhythm for each band
 - compute_player_score end-to-end (valid and impossible positions)
@@ -14,6 +14,7 @@ from __future__ import annotations
 import pytest
 
 from app.lineup_model.player_score import (
+    _MATCHUP_SHRINK_PA,
     compute_player_score,
     matchup_score,
     position_fit,
@@ -119,79 +120,77 @@ def test_recent_form_both_missing_equals_season_ops() -> None:
 
 
 # ---------------------------------------------------------------------------
-# matchup_score — PA threshold boundaries
+# matchup_score — sample-size shrinkage toward season OPS
+#
+# The split estimate is regressed toward season OPS with weight
+# w = pa / (pa + K), K = _MATCHUP_SHRINK_PA. This replaces the old hard
+# PA-threshold step blend: it is continuous (no cliff), monotone in PA, and
+# applies textbook regression-to-the-mean to noisy small-sample splits.
 # ---------------------------------------------------------------------------
 
 
 def test_matchup_uses_season_when_no_split() -> None:
-    """No split data (pa=0, ops=None) → season OPS."""
+    """No split data (ops=None) → season OPS, regardless of PA."""
     stats = _make_stats(ops=0.800, vs_rhp_ops=None, vs_rhp_pa=0)
     score, reason = matchup_score(stats, Handedness.RIGHT)
     assert score == pytest.approx(0.800)
-    assert "no split" in reason.note or "PA=0" in reason.note
+    assert "no split" in reason.note
 
 
-def test_matchup_uses_season_when_pa_under_20() -> None:
-    """PA < 20 → season OPS even if split data exists."""
-    stats = _make_stats(ops=0.800, vs_rhp_ops=1.100, vs_rhp_pa=15)
-    score, reason = matchup_score(stats, Handedness.RIGHT)
+def test_matchup_zero_pa_collapses_to_season() -> None:
+    """Split present but 0 PA → weight 0 → season OPS exactly."""
+    stats = _make_stats(ops=0.800, vs_rhp_ops=1.100, vs_rhp_pa=0)
+    score, _ = matchup_score(stats, Handedness.RIGHT)
     assert score == pytest.approx(0.800)
-    assert "<20" in reason.note
 
 
-def test_matchup_blend_40_60_at_pa_20() -> None:
-    """PA exactly 20 → 40 % split + 60 % season."""
-    stats = _make_stats(ops=0.800, vs_rhp_ops=1.000, vs_rhp_pa=20)
-    score, reason = matchup_score(stats, Handedness.RIGHT)
-    expected = 0.40 * 1.000 + 0.60 * 0.800
-    assert score == pytest.approx(expected)
-    assert "20-39" in reason.note
-
-
-def test_matchup_blend_40_60_at_pa_39() -> None:
-    """PA=39 → still 40/60 blend."""
-    stats = _make_stats(ops=0.800, vs_rhp_ops=1.000, vs_rhp_pa=39)
+def test_matchup_half_weight_at_regression_constant() -> None:
+    """PA equal to the regression constant K → exactly a 50/50 blend."""
+    stats = _make_stats(ops=0.800, vs_rhp_ops=1.000, vs_rhp_pa=_MATCHUP_SHRINK_PA)
     score, _ = matchup_score(stats, Handedness.RIGHT)
-    expected = 0.40 * 1.000 + 0.60 * 0.800
+    expected = 0.50 * 1.000 + 0.50 * 0.800
     assert score == pytest.approx(expected)
 
 
-def test_matchup_blend_70_30_at_pa_40() -> None:
-    """PA exactly 40 → 70 % split + 30 % season."""
-    stats = _make_stats(ops=0.800, vs_rhp_ops=1.000, vs_rhp_pa=40)
-    score, reason = matchup_score(stats, Handedness.RIGHT)
-    expected = 0.70 * 1.000 + 0.30 * 0.800
-    assert score == pytest.approx(expected)
-    assert "40-79" in reason.note
+def test_matchup_more_pa_gives_more_split_weight() -> None:
+    """Monotonic: a larger sample pulls the score closer to the split."""
+    low = _make_stats(ops=0.800, vs_rhp_ops=1.100, vs_rhp_pa=10)
+    mid = _make_stats(ops=0.800, vs_rhp_ops=1.100, vs_rhp_pa=80)
+    high = _make_stats(ops=0.800, vs_rhp_ops=1.100, vs_rhp_pa=400)
+    s_low, _ = matchup_score(low, Handedness.RIGHT)
+    s_mid, _ = matchup_score(mid, Handedness.RIGHT)
+    s_high, _ = matchup_score(high, Handedness.RIGHT)
+    # Each result stays between season (0.800) and split (1.100)...
+    assert 0.800 < s_low < s_mid < s_high < 1.100
 
 
-def test_matchup_blend_70_30_at_pa_79() -> None:
-    """PA=79 → still 70/30 blend."""
-    stats = _make_stats(ops=0.800, vs_rhp_ops=1.000, vs_rhp_pa=79)
+def test_matchup_large_pa_approaches_split() -> None:
+    """As PA grows very large the score converges to the raw split."""
+    stats = _make_stats(ops=0.800, vs_rhp_ops=1.100, vs_rhp_pa=5000)
     score, _ = matchup_score(stats, Handedness.RIGHT)
-    expected = 0.70 * 1.000 + 0.30 * 0.800
-    assert score == pytest.approx(expected)
+    assert score == pytest.approx(1.100, abs=0.02)
 
 
-def test_matchup_full_confidence_at_pa_80() -> None:
-    """PA exactly 80 → split OPS 100 %."""
-    stats = _make_stats(ops=0.800, vs_rhp_ops=1.100, vs_rhp_pa=80)
-    score, reason = matchup_score(stats, Handedness.RIGHT)
-    assert score == pytest.approx(1.100)
-    assert "full confidence" in reason.note
+def test_matchup_is_continuous_across_old_80_pa_cliff() -> None:
+    """No discontinuity at the old PA=80 boundary (the regression removes the cliff)."""
+    at_79 = _make_stats(ops=0.800, vs_rhp_ops=1.100, vs_rhp_pa=79)
+    at_80 = _make_stats(ops=0.800, vs_rhp_ops=1.100, vs_rhp_pa=80)
+    s_79, _ = matchup_score(at_79, Handedness.RIGHT)
+    s_80, _ = matchup_score(at_80, Handedness.RIGHT)
+    assert abs(s_80 - s_79) < 0.01
 
 
 def test_matchup_lhp_uses_vs_lhp_split() -> None:
-    """Opponent LHP → vs_lhp split used."""
+    """Opponent LHP → vs_lhp split is the one regressed toward season."""
     stats = _make_stats(
         ops=0.800,
         vs_lhp_ops=0.950,
-        vs_lhp_pa=80,
+        vs_lhp_pa=_MATCHUP_SHRINK_PA,
         vs_rhp_ops=0.700,
-        vs_rhp_pa=80,
+        vs_rhp_pa=_MATCHUP_SHRINK_PA,
     )
     score, reason = matchup_score(stats, Handedness.LEFT)
-    assert score == pytest.approx(0.950)
+    assert score == pytest.approx(0.50 * 0.950 + 0.50 * 0.800)
     assert "LHP" in reason.note
 
 

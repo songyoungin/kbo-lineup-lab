@@ -5,7 +5,8 @@ Component weights (sum to 1.0):
                          falls back to the OPS/OBP/SLG formula when the
                          advanced metrics are absent)
   recent_form     30 %  (rolling 14/30-day OPS, season-OPS fallback)
-  matchup         20 %  (vs-LHP/RHP splits, season-OPS fallback)
+  matchup         20 %  (vs-LHP/RHP splits regressed toward season OPS by
+                         sample size; season OPS when no split data)
   position_fit    10 %  (primary / secondary / recent-played eligibility)
   start_rhythm     5 %  (starts in the team's last 5 games)
 
@@ -130,18 +131,26 @@ def recent_form(stats: HitterStats) -> tuple[float, ScoringReason]:
 # Handedness matchup
 # ---------------------------------------------------------------------------
 
+# Sample-size shrinkage constant: PA at which a handedness split is trusted at
+# 50 % and the season rate at 50 %. The split is regressed toward season OPS via
+# w = pa / (pa + _MATCHUP_SHRINK_PA), so small samples lean on the season prior
+# and confidence rises smoothly with PA (no discrete threshold cliffs).
+_MATCHUP_SHRINK_PA = 50.0
+
 
 def matchup_score(stats: HitterStats, opp_handedness: Handedness) -> tuple[float, ScoringReason]:
-    """Compute handedness matchup score with PA-threshold confidence blending.
+    """Compute handedness matchup score, regressing the split toward season OPS.
 
-    PA thresholds (vs the relevant side):
-      >= 80 PA : split 100 %
-      40-79 PA : split 70 % + season 30 %
-      20-39 PA : split 40 % + season 60 %
-      < 20 PA  : season OPS 100 % (no split data trusted)
+    The relevant-side split (vs RHP or vs LHP, picked by the opposing starter's
+    handedness) is shrunk toward the season rate by sample size:
 
-    Switch hitters are treated as always having the favourable side — we
-    use the split if available, otherwise season OPS.
+        w = pa / (pa + _MATCHUP_SHRINK_PA)
+        score = w * split_ops + (1 - w) * season_ops
+
+    This is empirical-Bayes regression to the mean: a small sample leans on the
+    season prior and trust rises smoothly with PA, so there are no discontinuous
+    jumps at fixed thresholds. With no split data (``split_ops is None``) the
+    score is the season OPS. A switch-pitching opponent is treated as RHP.
 
     Args:
         stats: Hitter statistics with optional split fields.
@@ -161,22 +170,16 @@ def matchup_score(stats: HitterStats, opp_handedness: Handedness) -> tuple[float
 
     season_ops = stats.ops
 
-    if split_ops is None or pa < 20:
+    if split_ops is None:
         score = season_ops
-        note = f"vs_{side}: PA={pa} <20 or no split, using season OPS={season_ops:.3f}"
-    elif pa < 40:
-        score = 0.40 * split_ops + 0.60 * season_ops
-        note = (
-            f"vs_{side}: PA={pa} 20-39, blend 40/60 split={split_ops:.3f} season={season_ops:.3f}"
-        )
-    elif pa < 80:
-        score = 0.70 * split_ops + 0.30 * season_ops
-        note = (
-            f"vs_{side}: PA={pa} 40-79, blend 70/30 split={split_ops:.3f} season={season_ops:.3f}"
-        )
+        note = f"vs_{side}: no split, using season OPS={season_ops:.3f}"
     else:
-        score = split_ops
-        note = f"vs_{side}: PA={pa} >=80, split={split_ops:.3f} full confidence"
+        weight = pa / (pa + _MATCHUP_SHRINK_PA)
+        score = weight * split_ops + (1.0 - weight) * season_ops
+        note = (
+            f"vs_{side}: PA={pa} shrink w={weight:.2f} "
+            f"split={split_ops:.3f} season={season_ops:.3f}"
+        )
 
     reason = ScoringReason(
         component="matchup",
