@@ -22,6 +22,7 @@ def cors_origins() -> list[str]:
 
 app = FastAPI(title="KBO Lineup Lab API")
 
+# Origins are read once at startup; changing KBO_CORS_ORIGINS requires a restart.
 app.add_middleware(
     CORSMiddleware,
     allow_origins=cors_origins(),
