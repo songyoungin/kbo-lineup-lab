@@ -26,6 +26,9 @@ from app.models.snapshot import (
     BoxScoreRow,
     BoxScoreSnapshot,
 )
+from app.postgame.narrative.generator import generate_narrative
+from app.postgame.narrative.provider import build_narrative_provider
+from app.postgame.narrative.types import NarrativeFacts
 from app.postgame.review_generator import (
     ActualLineupRow,
     BoxLineEntry,
@@ -302,13 +305,23 @@ def generate_review_for_run(
         player_names_by_id=name_map,
     )
 
+    # Narrative is presentational (best-effort LLM, deterministic Korean fallback);
+    # it is intentionally NOT part of output_hash.
+    facts = NarrativeFacts.from_breakdown(breakdown, name_map)
+    narrative, narrative_source = generate_narrative(facts, build_narrative_provider())
+
     # Persist summary (UNIQUE on review_run_id)
     summary = PostgameReviewSummary(
         review_run_id=run.id,
         summary_text=breakdown.summary_text,
         comparison_json=dict(breakdown.key_insights_json),
+        narrative=narrative,
     )
     session.add(summary)
+
+    model_config = dict(run.model_config_json or {})
+    model_config["narrative_source"] = narrative_source
+    run.model_config_json = model_config
 
     # Update run status
     run.status = "completed"

@@ -724,3 +724,38 @@ def test_postgame_uses_stored_actual_total_score(
 
     # If postgame is correctly reading the stored value, sentinel flows through.
     assert data["pregame_actual_score"] == pytest.approx(sentinel_actual_score)
+
+
+def test_generate_review_persists_korean_narrative(
+    client: TestClient,
+    _evaluation_run_id: int,
+    _box_score_snapshot_id: int,
+) -> None:
+    """The generated review persists a non-empty Korean narrative (skeleton in tests)."""
+    from sqlalchemy import select
+
+    from app.models.postgame import PostgameReviewSummary
+
+    resp = client.post(
+        "/api/jobs/generate-postgame-review",
+        json={
+            "evaluation_run_id": _evaluation_run_id,
+            "box_score_snapshot_id": _box_score_snapshot_id,
+        },
+    )
+    assert resp.status_code == 200, resp.text
+    review_run_id = resp.json()["postgame_review_run_id"]
+
+    _, factory, _, _, _, _, _ = _get_shared_state()
+    with factory() as s:
+        summary = (
+            s.execute(
+                select(PostgameReviewSummary).where(
+                    PostgameReviewSummary.review_run_id == review_run_id
+                )
+            )
+            .scalars()
+            .one()
+        )
+        assert summary.narrative is not None
+        assert summary.narrative.startswith("모델은 이날 실제 라인업을")
