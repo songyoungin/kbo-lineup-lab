@@ -45,10 +45,12 @@ in `apps/api/.env.example`).
 
 ## Code changes (this repo)
 
-1. **`apps/api/Dockerfile`** — `python:3.13-slim` base, install `uv`,
-   `uv sync --frozen --no-dev`, run
+1. **`Dockerfile` (repo root)** — `python:3.13-slim` base, install `uv`,
+   `uv sync --frozen --no-dev` against the workspace lock (which lives at the
+   repo root — this is why the Dockerfile and build context are the repo
+   root, not `apps/api`), run
    `uvicorn app.main:app --host 0.0.0.0 --port $PORT` (Cloud Run injects
-   `PORT`).
+   `PORT`). A root `.dockerignore` keeps the context small.
 2. **CORS from env** — replace the hardcoded origin list in
    `apps/api/app/main.py` with `KBO_CORS_ORIGINS` (comma-separated). Default
    when unset: the current two localhost origins, so local dev is unchanged.
@@ -69,7 +71,7 @@ in `apps/api/.env.example`).
 ## One-time deployment steps (outside the repo)
 
 - **Cloud Run**: create/choose a GCP project, then
-  `gcloud run deploy kbo-lineup-lab-api --source apps/api
+  `gcloud run deploy kbo-lineup-lab-api --source .
   --region asia-northeast3 --allow-unauthenticated --min-instances 0
   --max-instances 1`. Env: `KBO_DATABASE_URL` and `KBO_ADMIN_TOKEN` from
   Secret Manager, `KBO_CORS_ORIGINS=https://<app>.vercel.app`.
