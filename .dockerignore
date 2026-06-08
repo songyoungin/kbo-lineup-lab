@@ -1,0 +1,11 @@
+.git
+.venv
+**/.env
+**/.env.*
+!**/.env.example
+**/node_modules
+**/.next
+**/__pycache__
+**/*.db
+docs
+postgame6-live.png
