@@ -39,13 +39,15 @@ const BADGE_LABEL: Record<string, string> = {
 
 // Pentagon radar over the 5 axes (0–100). Pure SVG, no chart dependency.
 function Radar({ values }: { values: number[] }) {
+  if (values.length < 3) return null;
   const size = 132;
   const c = size / 2;
   const r = c - 18;
   const n = values.length; // 5
   const point = (i: number, mag: number) => {
+    const m = Math.max(0, Math.min(100, mag));
     const angle = -Math.PI / 2 + (2 * Math.PI * i) / n;
-    const rad = (mag / 100) * r;
+    const rad = (m / 100) * r;
     return [c + rad * Math.cos(angle), c + rad * Math.sin(angle)];
   };
   const grid = [25, 50, 75, 100].map((g) =>
