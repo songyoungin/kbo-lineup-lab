@@ -996,6 +996,13 @@ def _form_badge(recent_14d_ops: float | None, season_ops: float) -> str:
     return "NEUTRAL"
 
 
+def _overall_from_total(total_score: float) -> int:
+    """Map a composite player score (OPS space) to a 0–99 OVR (display only)."""
+    pct = (total_score - _OPS_AXIS_LO) / (_OPS_AXIS_HI - _OPS_AXIS_LO)
+    clamped = max(0.0, min(1.0, pct))
+    return int(round(clamped * 99))
+
+
 def build_player_score_card(
     session: Session,
     game_id: int,
@@ -1107,6 +1114,9 @@ def build_player_score_card(
         )
 
     by_component: dict[str, ScoringReason] = {r.component: r for r in breakdown.reasons}
+    assert set(by_component) == set(_CARD_COMPONENT_ORDER), (
+        f"scoring components {set(by_component)} != card order {set(_CARD_COMPONENT_ORDER)}"
+    )
     factors: list[PlayerScoreCardFactor] = []
     for component in _CARD_COMPONENT_ORDER:
         reason = by_component[component]
@@ -1120,7 +1130,8 @@ def build_player_score_card(
             )
         )
 
-    overall = int(round(_axis_score("season_offense", breakdown.total_score) * 0.99))
+    # OVR is display-only: maps the composite total_score (OPS space) to [0, 99].
+    overall = _overall_from_total(breakdown.total_score)
 
     name_map = _player_names_bulk(session, [player_id])
 
