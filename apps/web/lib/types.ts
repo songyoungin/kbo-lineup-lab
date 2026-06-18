@@ -150,6 +150,37 @@ export interface PlayerComparisonResponse {
   unmodeled_factors: string[];
 }
 
+export type FormBadge = "HOT" | "COLD" | "NEUTRAL";
+
+export type ScoreCardComponent =
+  | "season_offense"
+  | "recent_form"
+  | "matchup"
+  | "position_fit"
+  | "start_rhythm";
+
+export interface PlayerScoreCardFactor {
+  component: ScoreCardComponent;
+  label_ko: string;
+  raw_value: number;
+  weight: number;
+  axis_score: number;
+}
+
+export interface PlayerScoreCardResponse {
+  game_id: number;
+  player_id: number;
+  player_name: string;
+  position: string;
+  overall: number;
+  total_score: number;
+  factors: PlayerScoreCardFactor[];
+  form_badge: FormBadge;
+  vs_rhp_ops: number | null;
+  vs_lhp_ops: number | null;
+  risp_avg: number | null;
+}
+
 // ---------------------------------------------------------------------------
 // Postgame review
 // ---------------------------------------------------------------------------

@@ -5,6 +5,7 @@ import type {
   IngestionRunListResponse,
   LineupComparisonResponse,
   PlayerComparisonResponse,
+  PlayerScoreCardResponse,
   PostgameResponse,
   PregameResponse,
   ReplayEvaluationRequest,
@@ -79,6 +80,11 @@ export const api = {
   playerCompare: (gameId: number, battingOrder: number) =>
     apiGet<PlayerComparisonResponse>(
       `/api/games/${gameId}/players/compare?batting_order=${battingOrder}`
+    ),
+
+  playerScoreCard: (gameId: number, playerId: number) =>
+    apiGet<PlayerScoreCardResponse>(
+      `/api/games/${gameId}/players/${playerId}/score-card`
     ),
 
   postgame: (gameId: number) =>
