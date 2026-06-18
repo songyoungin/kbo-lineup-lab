@@ -4,6 +4,7 @@ import { ApiError, api } from "@/lib/api";
 import { LineupScoreSummary } from "@/components/pregame/lineup-score-summary";
 import { LineupComparisonTable } from "@/components/pregame/lineup-comparison-table";
 import { PlayerComparisonPanel } from "@/components/pregame/player-comparison-panel";
+import { PlayerScoreCard } from "@/components/pregame/player-score-card";
 import { SectionHeading } from "@/components/section-heading";
 import { modelLimitationKo } from "@/lib/i18n";
 
@@ -94,6 +95,21 @@ export default async function PregamePage({
       <section className="reveal reveal-2">
         <SectionHeading>라인업 비교</SectionHeading>
         <LineupComparisonTable rows={comparison.rows} />
+      </section>
+
+      {/* 추천 라인업 선수 카드 */}
+      <section className="space-y-3">
+        <SectionHeading>추천 라인업 선수 카드</SectionHeading>
+        <div className="flex flex-wrap gap-3">
+          {pregame.recommended_lineup.map((row) => (
+            <PlayerScoreCard
+              key={row.player_id}
+              gameId={gameId}
+              playerId={row.player_id}
+              playerName={row.player_name}
+            />
+          ))}
+        </div>
       </section>
 
       {/* 선수 비교 패널 */}
