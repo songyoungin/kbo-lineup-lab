@@ -952,3 +952,72 @@ def test_pregame_opponent_pitcher_maps_key_insights_block() -> None:
         assert view.opponent_pitcher.whip == pytest.approx(1.59)
         assert view.opponent_pitcher.k_pct == pytest.approx(14.0 / 52.0)
         assert view.opponent_pitcher.multiplier == pytest.approx(0.95)
+
+
+# ---------------------------------------------------------------------------
+# GET /api/games/{id}/players/{player_id}/score-card
+# ---------------------------------------------------------------------------
+
+
+def _recommended_player_id(client: TestClient, game_id: int, batting_order: int) -> int:
+    """Read a recommended player_id from the compare endpoint for a slot."""
+    resp = client.get(f"/api/games/{game_id}/players/compare?batting_order={batting_order}")
+    assert resp.status_code == 200
+    return int(resp.json()["recommended"]["player_id"])
+
+
+def test_score_card_returns_five_factors(
+    client: TestClient, _game_id: int, _team_id: int, _model_version_id: int
+) -> None:
+    """The score-card returns exactly the five scoring components in fixed order."""
+    body = _replay_body(_game_id, _team_id, _model_version_id)
+    client.post("/api/jobs/replay-evaluation", json=body)
+    player_id = _recommended_player_id(client, _game_id, 1)
+
+    resp = client.get(f"/api/games/{_game_id}/players/{player_id}/score-card")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["player_id"] == player_id
+    components = [f["component"] for f in data["factors"]]
+    assert components == [
+        "season_offense",
+        "recent_form",
+        "matchup",
+        "position_fit",
+        "start_rhythm",
+    ]
+
+
+def test_score_card_axis_scores_in_range(
+    client: TestClient, _game_id: int, _team_id: int, _model_version_id: int
+) -> None:
+    """Every radar axis_score is clamped to [0, 100] and OVR to [0, 99]."""
+    body = _replay_body(_game_id, _team_id, _model_version_id)
+    client.post("/api/jobs/replay-evaluation", json=body)
+    player_id = _recommended_player_id(client, _game_id, 3)
+
+    resp = client.get(f"/api/games/{_game_id}/players/{player_id}/score-card")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert 0 <= data["overall"] <= 99
+    for f in data["factors"]:
+        assert 0.0 <= f["axis_score"] <= 100.0
+    assert data["form_badge"] in ("HOT", "COLD", "NEUTRAL")
+
+
+def test_score_card_unknown_player_returns_404(
+    client: TestClient, _game_id: int, _team_id: int, _model_version_id: int
+) -> None:
+    """A player_id not in this game's lineups yields 404."""
+    body = _replay_body(_game_id, _team_id, _model_version_id)
+    client.post("/api/jobs/replay-evaluation", json=body)
+
+    resp = client.get(f"/api/games/{_game_id}/players/99999999/score-card")
+    assert resp.status_code == 404
+
+
+def test_score_card_no_run_returns_404(clean_env: tuple[TestClient, int, int, int]) -> None:
+    """With no completed evaluation run, the score-card is 404 (no snapshot to score)."""
+    client, game_id, _team_id, _mv_id = clean_env
+    resp = client.get(f"/api/games/{game_id}/players/1/score-card")
+    assert resp.status_code == 404
