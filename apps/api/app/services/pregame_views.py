@@ -1099,7 +1099,9 @@ def build_player_score_card(
             detail=f"No stat snapshot for player {player_id} in game {game_id}",
         )
 
-    stats = build_hitter_stats(player_id, stat_row.stats_json, position)
+    player = session.get(Player, player_id)
+    player_pos = player.position if player is not None else None
+    stats = build_hitter_stats(player_id, stat_row.stats_json, player_pos)
     opp_handedness, _ = _resolve_opp_handedness(session, run)
 
     try:
@@ -1137,9 +1139,10 @@ def build_player_score_card(
         )
 
     by_component: dict[str, ScoringReason] = {r.component: r for r in breakdown.reasons}
-    assert set(by_component) == set(_CARD_COMPONENT_ORDER), (
-        f"scoring components {set(by_component)} != card order {set(_CARD_COMPONENT_ORDER)}"
-    )
+    if set(by_component) != set(_CARD_COMPONENT_ORDER):
+        raise RuntimeError(
+            f"scoring components {set(by_component)} != card order {set(_CARD_COMPONENT_ORDER)}"
+        )
     factors: list[PlayerScoreCardFactor] = []
     for component in _CARD_COMPONENT_ORDER:
         reason = by_component[component]

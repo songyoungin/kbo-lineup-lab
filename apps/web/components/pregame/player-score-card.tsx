@@ -147,6 +147,7 @@ export function PlayerScoreCard({
       </div>
       <Radar values={d.factors.map((f) => f.axis_score)} />
       <span
+        aria-label={`폼: ${{ HOT: "상승세", COLD: "하락세", NEUTRAL: "보통" }[d.form_badge] ?? d.form_badge}`}
         className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${BADGE_STYLE[d.form_badge]}`}
       >
         {BADGE_LABEL[d.form_badge]}
