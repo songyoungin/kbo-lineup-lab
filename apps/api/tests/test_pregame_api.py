@@ -1021,3 +1021,34 @@ def test_score_card_no_run_returns_404(clean_env: tuple[TestClient, int, int, in
     client, game_id, _team_id, _mv_id = clean_env
     resp = client.get(f"/api/games/{game_id}/players/1/score-card")
     assert resp.status_code == 404
+
+
+def test_all_recommended_players_are_cardable(
+    client: TestClient, _game_id: int, _team_id: int, _model_version_id: int
+) -> None:
+    """Every player in the recommended lineup must return a 200 score-card with 5 factors.
+
+    Encodes the invariant: if the evaluator can score a player at their recommended
+    slot, the score-card endpoint must also succeed (because it now mirrors the same
+    enrichment+synthesis path). A 404 here means position_fit returned None, which
+    indicates the score-card skipped lineup-history enrichment.
+    """
+    body = _replay_body(_game_id, _team_id, _model_version_id)
+    client.post("/api/jobs/replay-evaluation", json=body)
+
+    pregame = client.get(f"/api/games/{_game_id}/pregame")
+    assert pregame.status_code == 200
+    recommended = pregame.json()["recommended_lineup"]
+    assert len(recommended) == 9, "Fixture must have 9 recommended players"
+
+    for slot in recommended:
+        pid = slot["player_id"]
+        resp = client.get(f"/api/games/{_game_id}/players/{pid}/score-card")
+        assert resp.status_code == 200, (
+            f"player_id={pid} (slot position={slot['position']}) returned "
+            f"{resp.status_code}: {resp.json()}"
+        )
+        data = resp.json()
+        assert len(data["factors"]) == 5, (
+            f"player_id={pid} has {len(data['factors'])} factors, expected 5"
+        )

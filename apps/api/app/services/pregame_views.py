@@ -45,6 +45,8 @@ from app.schemas.pregame import (
 from app.services.evaluation_runs import get_or_create_evaluation_run
 from app.services.ingestion_status import build_game_ingestion_status
 from app.services.lineup_evaluator import (
+    _enrich_with_lineup_history,
+    _load_recent_lineups,
     _resolve_opp_handedness,
     build_hitter_stats,
     compute_actual_lineup_score,
@@ -1105,7 +1107,28 @@ def build_player_score_card(
     except ValueError:
         slot_position = Position.DH
 
-    breakdown = compute_player_score(stats, slot_position, opp_handedness)
+    # Mirror the evaluator: enrich the single player's stats with lineup history
+    # so recent_positions and starts_last_5_games are populated (same as
+    # evaluate_lineup_for_run does before calling compute_player_score).
+    recent_lineups = _load_recent_lineups(
+        session, run.team_id, run.evaluation_cutoff_at, exclude_game_id=run.game_id
+    )
+    enriched_list = _enrich_with_lineup_history([stats], recent_lineups)
+    enriched_stats = enriched_list[0]
+
+    # Synthesise the slot position into secondary_positions when not already
+    # covered by primary / secondary / (enriched) recent positions — identical
+    # to what the evaluator does for the played slot.
+    if (
+        slot_position != enriched_stats.primary_position
+        and slot_position not in enriched_stats.secondary_positions
+        and slot_position not in enriched_stats.recent_positions
+    ):
+        enriched_stats = enriched_stats.model_copy(
+            update={"secondary_positions": (*enriched_stats.secondary_positions, slot_position)}
+        )
+
+    breakdown = compute_player_score(enriched_stats, slot_position, opp_handedness)
     if breakdown is None:
         # Position came from the lineup row, so it should be eligible; guard anyway.
         raise HTTPException(
@@ -1143,9 +1166,9 @@ def build_player_score_card(
         overall=overall,
         total_score=breakdown.total_score,
         factors=factors,
-        form_badge=_form_badge(stats.recent_14d_ops, stats.ops),  # type: ignore[arg-type]
-        vs_rhp_ops=stats.vs_rhp_ops,
-        vs_lhp_ops=stats.vs_lhp_ops,
+        form_badge=_form_badge(enriched_stats.recent_14d_ops, enriched_stats.ops),  # type: ignore[arg-type]
+        vs_rhp_ops=enriched_stats.vs_rhp_ops,
+        vs_lhp_ops=enriched_stats.vs_lhp_ops,
         risp_avg=(
             float(stat_row.stats_json["risp_avg"])  # type: ignore[arg-type]
             if isinstance(stat_row.stats_json.get("risp_avg"), (int, float))
