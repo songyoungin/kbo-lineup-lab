@@ -10,8 +10,9 @@ from fastapi import HTTPException
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.lineup_model.lineup_score import compute_lineup_score
 from app.lineup_model.player_score import compute_player_score
-from app.lineup_model.types import Handedness, Position, ScoringReason
+from app.lineup_model.types import Handedness, LineupSlot, Position, ScoringReason
 from app.models.evaluation import LineupEvaluationRun, LineupEvaluationSummary, RecommendedLineupRow
 from app.models.game import Game
 from app.models.player import Player
@@ -29,6 +30,7 @@ from app.schemas.pregame import (
     LineupComparisonRow,
     LineupDifference,
     LineupRow,
+    LineupScoreResponse,
     OpponentPitcher,
     PlayerComparisonResponse,
     PlayerComparisonStats,
@@ -1177,4 +1179,137 @@ def build_player_score_card(
             if isinstance(stat_row.stats_json.get("risp_avg"), (int, float))
             else None
         ),
+    )
+
+
+# ---------------------------------------------------------------------------
+# Lineup simulator (score an arbitrary batting order; read-only)
+# ---------------------------------------------------------------------------
+
+
+def _slots_for_order(
+    ordered_player_ids: list[int],
+    positions_by_player: dict[int, str],
+) -> tuple[LineupSlot, ...]:
+    """Build batting-order slots (1..N) for an ordered list of player ids.
+
+    Each player keeps its recommended position; an unparseable position string
+    degrades to DH (mirrors build_player_score_card's guard).
+    """
+    slots: list[LineupSlot] = []
+    for idx, player_id in enumerate(ordered_player_ids, start=1):
+        try:
+            position = Position(positions_by_player[player_id])
+        except ValueError:
+            position = Position.DH
+        slots.append(LineupSlot(batting_order=idx, player_id=player_id, position=position))
+    return tuple(slots)
+
+
+def score_custom_batting_order(
+    session: Session,
+    game_id: int,
+    player_ids: list[int],
+    *,
+    team_id: int | None = None,
+) -> LineupScoreResponse:
+    """Score a user-supplied batting order via the deterministic Markov model.
+
+    Reuses compute_lineup_score (raw expected runs + handedness penalty) for both
+    the submitted order and a freshly-recomputed recommended baseline, so the
+    delta is on one consistent scale. Read-only; never persists.
+
+    Args:
+        session: SQLAlchemy session.
+        game_id: Game whose latest completed run supplies the snapshot.
+        player_ids: Desired batting order; must be a permutation of the
+            recommended lineup's nine player ids.
+        team_id: Team to evaluate; defaults to LG.
+
+    Returns:
+        LineupScoreResponse.
+
+    Raises:
+        HTTPException: 404 (game/run missing), 422 (not a permutation of the
+            recommended lineup).
+    """
+    if team_id is None:
+        team_id = _lookup_team_id(session, "LG")
+
+    game = session.get(Game, game_id)
+    if game is None:
+        raise HTTPException(status_code=404, detail=f"Game {game_id} not found")
+
+    run = _latest_completed_run(session, game_id, team_id)
+    if run is None:
+        raise HTTPException(
+            status_code=404,
+            detail=(
+                f"No completed evaluation run for game_id={game_id} team_id={team_id}. "
+                "Trigger one via POST /api/jobs/replay-evaluation first."
+            ),
+        )
+
+    rec_rows = (
+        session.execute(
+            select(RecommendedLineupRow)
+            .where(RecommendedLineupRow.evaluation_run_id == run.id)
+            .order_by(RecommendedLineupRow.batting_order)
+        )
+        .scalars()
+        .all()
+    )
+    if not rec_rows:
+        raise HTTPException(
+            status_code=404,
+            detail=f"No recommended lineup for game {game_id}",
+        )
+
+    positions_by_player = {r.player_id: r.position for r in rec_rows}
+    recommended_ids = [r.player_id for r in rec_rows]
+
+    # The submitted order must be a permutation of the recommended nine players.
+    if len(player_ids) != len(recommended_ids) or set(player_ids) != set(recommended_ids):
+        raise HTTPException(
+            status_code=422,
+            detail="player_ids must be a permutation of the recommended lineup's players",
+        )
+
+    stat_rows = (
+        session.execute(
+            select(PlayerStatSnapshotRow).where(
+                PlayerStatSnapshotRow.snapshot_id == run.stat_snapshot_id,
+                PlayerStatSnapshotRow.player_id.in_(recommended_ids),
+            )
+        )
+        .scalars()
+        .all()
+    )
+    stats_json_by_player: dict[int, dict[str, object]] = {
+        r.player_id: r.stats_json for r in stat_rows
+    }
+    # Enrichment (recent_positions / starts_last_5) is irrelevant here: compute_lineup_score
+    # uses only OBP/SLG (expected runs) and handedness+position (penalty), so building stats
+    # straight from the snapshot reproduces the engine's lineup score exactly.
+    stats_by_player = {
+        pid: build_hitter_stats(pid, stats_json_by_player.get(pid, {}), positions_by_player[pid])
+        for pid in recommended_ids
+    }
+
+    opp_handedness, _ = _resolve_opp_handedness(session, run)
+
+    custom = compute_lineup_score(
+        _slots_for_order(player_ids, positions_by_player), stats_by_player, opp_handedness
+    )
+    baseline = compute_lineup_score(
+        _slots_for_order(recommended_ids, positions_by_player), stats_by_player, opp_handedness
+    )
+
+    return LineupScoreResponse(
+        game_id=game_id,
+        expected_runs=custom.weighted_player_score,
+        handedness_adjustment=custom.handedness_balance_adjustment,
+        total_score=custom.total_score,
+        recommended_total_score=baseline.total_score,
+        delta_vs_recommended=custom.total_score - baseline.total_score,
     )

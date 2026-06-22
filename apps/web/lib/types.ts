@@ -181,6 +181,19 @@ export interface PlayerScoreCardResponse {
   risp_avg: number | null;
 }
 
+export interface LineupScoreRequest {
+  player_ids: number[];
+}
+
+export interface LineupScoreResponse {
+  game_id: number;
+  expected_runs: number;
+  handedness_adjustment: number;
+  total_score: number;
+  recommended_total_score: number;
+  delta_vs_recommended: number;
+}
+
 // ---------------------------------------------------------------------------
 // Postgame review
 // ---------------------------------------------------------------------------

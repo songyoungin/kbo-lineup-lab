@@ -4,6 +4,8 @@ import type {
   GeneratePostgameReviewResponse,
   IngestionRunListResponse,
   LineupComparisonResponse,
+  LineupScoreRequest,
+  LineupScoreResponse,
   PlayerComparisonResponse,
   PlayerScoreCardResponse,
   PostgameResponse,
@@ -76,6 +78,12 @@ export const api = {
 
   lineupComparison: (gameId: number) =>
     apiGet<LineupComparisonResponse>(`/api/games/${gameId}/lineup-comparison`),
+
+  lineupScore: (gameId: number, playerIds: number[]) =>
+    apiPost<LineupScoreRequest, LineupScoreResponse>(
+      `/api/games/${gameId}/lineup-score`,
+      { player_ids: playerIds }
+    ),
 
   playerCompare: (gameId: number, battingOrder: number) =>
     apiGet<PlayerComparisonResponse>(
