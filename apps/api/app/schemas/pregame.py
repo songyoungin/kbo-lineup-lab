@@ -258,6 +258,60 @@ class PlayerComparisonResponse(BaseModel):
 
 
 # ---------------------------------------------------------------------------
+# Player score-card schemas (display-only; derived at request time)
+# ---------------------------------------------------------------------------
+
+
+FormBadgeLiteral = Literal["HOT", "COLD", "NEUTRAL"]
+
+ScoreCardComponentLiteral = Literal[
+    "season_offense",
+    "recent_form",
+    "matchup",
+    "position_fit",
+    "start_rhythm",
+]
+
+
+class PlayerScoreCardFactor(BaseModel):
+    """One radar axis: a scoring component with a display-normalized 0–100 score."""
+
+    model_config = ConfigDict(frozen=True)
+
+    component: ScoreCardComponentLiteral
+    label_ko: str
+    # Raw ScoringReason.value (OPS-space for offense/recent/matchup, [0.6,1.0] for the others)
+    raw_value: float
+    weight: float
+    # Display-only radar axis in [0, 100]; NOT used by the deterministic model.
+    axis_score: float
+
+
+class PlayerScoreCardResponse(BaseModel):
+    """Response for GET /api/games/{game_id}/players/{player_id}/score-card.
+
+    All of overall/axis_score/form_badge are presentation-only values derived
+    from the deterministic breakdown; they never feed back into scoring.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    game_id: int
+    player_id: int
+    player_name: str
+    position: str
+    # OVR 0–99 (display only)
+    overall: int
+    # Model composite — same numeric scale as the persisted recommended slot score
+    total_score: float
+    factors: list[PlayerScoreCardFactor]
+    form_badge: FormBadgeLiteral
+    vs_rhp_ops: float | None
+    vs_lhp_ops: float | None
+    risp_avg: float | None
+
+
+# ---------------------------------------------------------------------------
 # Job schemas
 # ---------------------------------------------------------------------------
 

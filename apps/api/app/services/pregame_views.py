@@ -10,7 +10,8 @@ from fastapi import HTTPException
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.lineup_model.types import Handedness
+from app.lineup_model.player_score import compute_player_score
+from app.lineup_model.types import Handedness, Position, ScoringReason
 from app.models.evaluation import LineupEvaluationRun, LineupEvaluationSummary, RecommendedLineupRow
 from app.models.game import Game
 from app.models.player import Player
@@ -31,6 +32,8 @@ from app.schemas.pregame import (
     OpponentPitcher,
     PlayerComparisonResponse,
     PlayerComparisonStats,
+    PlayerScoreCardFactor,
+    PlayerScoreCardResponse,
     PregameResponse,
     RecentGameSummary,
     ReplayEvaluationRequest,
@@ -41,7 +44,14 @@ from app.schemas.pregame import (
 )
 from app.services.evaluation_runs import get_or_create_evaluation_run
 from app.services.ingestion_status import build_game_ingestion_status
-from app.services.lineup_evaluator import compute_actual_lineup_score, evaluate_lineup_for_run
+from app.services.lineup_evaluator import (
+    _enrich_with_lineup_history,
+    _load_recent_lineups,
+    _resolve_opp_handedness,
+    build_hitter_stats,
+    compute_actual_lineup_score,
+    evaluate_lineup_for_run,
+)
 from app.services.snapshot_selector import (
     SnapshotNotFoundError,
     select_lineup_snapshot,
@@ -926,4 +936,245 @@ def replay_evaluation(
         evaluation_run_id=run.id,
         created=created,
         status=run.status,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Player score card (display-only visualization of the scoring breakdown)
+# ---------------------------------------------------------------------------
+
+# Korean labels for each scoring component, keyed by ScoringReason.component.
+_COMPONENT_LABEL_KO: dict[str, str] = {
+    "season_offense": "시즌 타격",
+    "recent_form": "최근 폼",
+    "matchup": "상대 매치업",
+    "position_fit": "포지션",
+    "start_rhythm": "출전 리듬",
+}
+
+# Fixed radar order so every card draws the pentagon identically.
+_CARD_COMPONENT_ORDER: tuple[str, ...] = (
+    "season_offense",
+    "recent_form",
+    "matchup",
+    "position_fit",
+    "start_rhythm",
+)
+
+# Display normalization bands. Offense/recent/matchup live in OPS space; the
+# position/rhythm components are already normalized to [0.6, 1.0].
+_OPS_AXIS_LO = 0.500
+_OPS_AXIS_HI = 1.100
+_NORM_AXIS_LO = 0.600
+_NORM_AXIS_HI = 1.000
+_OPS_SPACE_COMPONENTS = frozenset({"season_offense", "recent_form", "matchup"})
+
+# Hot/cold threshold: recent-14d OPS this far above/below season OPS flips the badge.
+_FORM_BADGE_DELTA = 0.050
+
+
+def _axis_score(component: str, value: float) -> float:
+    """Map a ScoringReason value to a display radar axis in [0, 100].
+
+    OPS-space components use the [0.5, 1.1] band; the already-normalized
+    position/rhythm components use their native [0.6, 1.0] band. Display-only.
+    """
+    if component in _OPS_SPACE_COMPONENTS:
+        lo, hi = _OPS_AXIS_LO, _OPS_AXIS_HI
+    else:
+        lo, hi = _NORM_AXIS_LO, _NORM_AXIS_HI
+    pct = (value - lo) / (hi - lo)
+    return max(0.0, min(100.0, pct * 100.0))
+
+
+def _form_badge(recent_14d_ops: float | None, season_ops: float) -> str:
+    """Classify hot/cold from recent-14d vs season OPS (display only)."""
+    if recent_14d_ops is None:
+        return "NEUTRAL"
+    if recent_14d_ops >= season_ops + _FORM_BADGE_DELTA:
+        return "HOT"
+    if recent_14d_ops <= season_ops - _FORM_BADGE_DELTA:
+        return "COLD"
+    return "NEUTRAL"
+
+
+def _overall_from_total(total_score: float) -> int:
+    """Map a composite player score (OPS space) to a 0–99 OVR (display only)."""
+    pct = (total_score - _OPS_AXIS_LO) / (_OPS_AXIS_HI - _OPS_AXIS_LO)
+    clamped = max(0.0, min(1.0, pct))
+    return int(round(clamped * 99))
+
+
+def build_player_score_card(
+    session: Session,
+    game_id: int,
+    player_id: int,
+    *,
+    team_id: int | None = None,
+) -> PlayerScoreCardResponse:
+    """Assemble the display score card for one player in a game.
+
+    Recomputes the five-factor breakdown via the deterministic scoring path and
+    adds presentation-only axis/OVR/badge values. Read-only; never persists.
+
+    Args:
+        session: SQLAlchemy session.
+        game_id: Game whose latest completed run supplies the snapshot.
+        player_id: Player to render. Must appear in the recommended or actual
+            lineup of that run (so a valid slot position exists).
+        team_id: Team to evaluate; defaults to LG.
+
+    Returns:
+        PlayerScoreCardResponse.
+
+    Raises:
+        HTTPException: 404 when game, completed run, snapshot row, or the
+            player's lineup slot is missing.
+    """
+    if team_id is None:
+        team_id = _lookup_team_id(session, "LG")
+
+    game = session.get(Game, game_id)
+    if game is None:
+        raise HTTPException(status_code=404, detail=f"Game {game_id} not found")
+
+    run = _latest_completed_run(session, game_id, team_id)
+    if run is None:
+        raise HTTPException(
+            status_code=404,
+            detail=(
+                f"No completed evaluation run for game_id={game_id} team_id={team_id}. "
+                "Trigger one via POST /api/jobs/replay-evaluation first."
+            ),
+        )
+
+    # Resolve the slot position: prefer the recommended lineup, fall back to actual.
+    position: str | None = None
+    rec_slot = (
+        session.execute(
+            select(RecommendedLineupRow).where(
+                RecommendedLineupRow.evaluation_run_id == run.id,
+                RecommendedLineupRow.player_id == player_id,
+            )
+        )
+        .scalars()
+        .first()
+    )
+    if rec_slot is not None:
+        position = rec_slot.position
+    else:
+        act_slot = (
+            session.execute(
+                select(ActualLineupSnapshotRow).where(
+                    ActualLineupSnapshotRow.snapshot_id == run.lineup_snapshot_id,
+                    ActualLineupSnapshotRow.player_id == player_id,
+                )
+            )
+            .scalars()
+            .first()
+        )
+        if act_slot is not None:
+            position = act_slot.position
+
+    if position is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Player {player_id} is not in game {game_id} lineups",
+        )
+
+    # Load the player's snapshot stats.
+    stat_row = (
+        session.execute(
+            select(PlayerStatSnapshotRow).where(
+                PlayerStatSnapshotRow.snapshot_id == run.stat_snapshot_id,
+                PlayerStatSnapshotRow.player_id == player_id,
+            )
+        )
+        .scalars()
+        .first()
+    )
+    if stat_row is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"No stat snapshot for player {player_id} in game {game_id}",
+        )
+
+    player = session.get(Player, player_id)
+    player_pos = player.position if player is not None else None
+    stats = build_hitter_stats(player_id, stat_row.stats_json, player_pos)
+    opp_handedness, _ = _resolve_opp_handedness(session, run)
+
+    try:
+        slot_position = Position(position)
+    except ValueError:
+        slot_position = Position.DH
+
+    # Mirror the evaluator: enrich the single player's stats with lineup history
+    # so recent_positions and starts_last_5_games are populated (same as
+    # evaluate_lineup_for_run does before calling compute_player_score).
+    recent_lineups = _load_recent_lineups(
+        session, run.team_id, run.evaluation_cutoff_at, exclude_game_id=run.game_id
+    )
+    enriched_list = _enrich_with_lineup_history([stats], recent_lineups)
+    enriched_stats = enriched_list[0]
+
+    # Synthesise the slot position into secondary_positions when not already
+    # covered by primary / secondary / (enriched) recent positions — identical
+    # to what the evaluator does for the played slot.
+    if (
+        slot_position != enriched_stats.primary_position
+        and slot_position not in enriched_stats.secondary_positions
+        and slot_position not in enriched_stats.recent_positions
+    ):
+        enriched_stats = enriched_stats.model_copy(
+            update={"secondary_positions": (*enriched_stats.secondary_positions, slot_position)}
+        )
+
+    breakdown = compute_player_score(enriched_stats, slot_position, opp_handedness)
+    if breakdown is None:
+        # Position came from the lineup row, so it should be eligible; guard anyway.
+        raise HTTPException(
+            status_code=404,
+            detail=f"Player {player_id} not eligible at position {position}",
+        )
+
+    by_component: dict[str, ScoringReason] = {r.component: r for r in breakdown.reasons}
+    if set(by_component) != set(_CARD_COMPONENT_ORDER):
+        raise RuntimeError(
+            f"scoring components {set(by_component)} != card order {set(_CARD_COMPONENT_ORDER)}"
+        )
+    factors: list[PlayerScoreCardFactor] = []
+    for component in _CARD_COMPONENT_ORDER:
+        reason = by_component[component]
+        factors.append(
+            PlayerScoreCardFactor(
+                component=component,  # type: ignore[arg-type]  # constrained by _CARD_COMPONENT_ORDER
+                label_ko=_COMPONENT_LABEL_KO[component],
+                raw_value=reason.value,
+                weight=reason.weight,
+                axis_score=_axis_score(component, reason.value),
+            )
+        )
+
+    # OVR is display-only: maps the composite total_score (OPS space) to [0, 99].
+    overall = _overall_from_total(breakdown.total_score)
+
+    name_map = _player_names_bulk(session, [player_id])
+
+    return PlayerScoreCardResponse(
+        game_id=game_id,
+        player_id=player_id,
+        player_name=name_map.get(player_id, f"Player({player_id})"),
+        position=position,
+        overall=overall,
+        total_score=breakdown.total_score,
+        factors=factors,
+        form_badge=_form_badge(enriched_stats.recent_14d_ops, enriched_stats.ops),  # type: ignore[arg-type]
+        vs_rhp_ops=enriched_stats.vs_rhp_ops,
+        vs_lhp_ops=enriched_stats.vs_lhp_ops,
+        risp_avg=(
+            float(stat_row.stats_json["risp_avg"])  # type: ignore[arg-type]
+            if isinstance(stat_row.stats_json.get("risp_avg"), (int, float))
+            else None
+        ),
     )

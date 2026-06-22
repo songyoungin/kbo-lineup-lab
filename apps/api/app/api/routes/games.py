@@ -4,11 +4,17 @@ from fastapi import APIRouter, Query
 
 from app.api.deps import SessionDep
 from app.schemas.postgame import PostgameResponse
-from app.schemas.pregame import LineupComparisonResponse, PlayerComparisonResponse, PregameResponse
+from app.schemas.pregame import (
+    LineupComparisonResponse,
+    PlayerComparisonResponse,
+    PlayerScoreCardResponse,
+    PregameResponse,
+)
 from app.services.postgame_reviews import build_postgame_view
 from app.services.pregame_views import (
     build_lineup_comparison,
     build_player_comparison,
+    build_player_score_card,
     build_pregame_view,
 )
 
@@ -41,3 +47,12 @@ def compare_players(
 ) -> PlayerComparisonResponse:
     """Return the head-to-head player comparison for a specific batting order slot."""
     return build_player_comparison(session, game_id, batting_order)
+
+
+@router.get(
+    "/{game_id}/players/{player_id}/score-card",
+    response_model=PlayerScoreCardResponse,
+)
+def player_score_card(game_id: int, player_id: int, session: SessionDep) -> PlayerScoreCardResponse:
+    """Return the display score card (radar factors + OVR) for one player."""
+    return build_player_score_card(session, game_id, player_id)
