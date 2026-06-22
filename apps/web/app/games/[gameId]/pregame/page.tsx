@@ -6,6 +6,7 @@ import { VersusRounds } from "@/components/pregame/versus-rounds";
 import { LineupComparisonTable } from "@/components/pregame/lineup-comparison-table";
 import { PlayerComparisonPanel } from "@/components/pregame/player-comparison-panel";
 import { SectionHeading } from "@/components/section-heading";
+import { LineupSimulator } from "@/components/pregame/lineup-simulator";
 import { modelLimitationKo } from "@/lib/i18n";
 
 // 모델 한계 표시 컴포넌트
@@ -101,6 +102,15 @@ export default async function PregamePage({
       <section className="reveal reveal-3 space-y-3">
         <SectionHeading>대결 라운드</SectionHeading>
         <VersusRounds gameId={gameId} rows={comparison.rows} />
+      </section>
+
+      {/* 타순 시뮬레이터 */}
+      <section className="reveal reveal-3 space-y-3">
+        <SectionHeading>타순 시뮬레이터</SectionHeading>
+        <LineupSimulator
+          gameId={gameId}
+          recommendedLineup={pregame.recommended_lineup}
+        />
       </section>
 
       {/* 선수 비교 패널 */}
