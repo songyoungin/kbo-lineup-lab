@@ -2,7 +2,7 @@ import { PlayerScoreCard } from "@/components/pregame/player-score-card";
 import { DIFF_TYPE_KO } from "@/lib/i18n";
 import type { LineupComparisonRow } from "@/lib/types";
 
-// 한 라운드(타순) 머리말: 타순 칩 + 차이 유형 라벨.
+// Header for one round (batting-order slot): order chip + difference-type label.
 function RoundHeader({ row }: { row: LineupComparisonRow }) {
   return (
     <div className="mb-3 flex items-center gap-2">
@@ -17,10 +17,11 @@ function RoundHeader({ row }: { row: LineupComparisonRow }) {
 }
 
 /**
- * 타순별 "감독 픽 vs AI 픽" 대결 라운드.
- * 선수가 서로 다른 슬롯은 두 장의 카드를 마주 세우고, 같은 선수가 포지션/타순만
- * 바뀐 슬롯은 카드 한 장 + 변경 설명을 보여준다(같은 카드 두 장 중복 방지).
- * 모든 타순이 일치하면 무승부 안내를 렌더한다.
+ * Per-order "manager pick vs AI pick" duel rounds.
+ * Slots with different players show two cards facing each other; slots where the
+ * same player appears but with a changed position/order show one card plus a
+ * change note (avoids duplicating the same card twice).
+ * If every slot matches, renders a draw notice.
  */
 export function VersusRounds({
   gameId,
@@ -54,8 +55,8 @@ export function VersusRounds({
               <div className="flex flex-col items-center gap-2">
                 <PlayerScoreCard
                   gameId={gameId}
-                  playerId={row.recommended_player_id}
-                  playerName={row.recommended_player_name}
+                  playerId={row.actual_player_id}
+                  playerName={row.actual_player_name}
                 />
                 <p className="text-center text-xs text-zinc-500">
                   같은 선수 · 감독 {row.actual_position} → AI{" "}

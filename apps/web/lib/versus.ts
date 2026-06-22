@@ -1,14 +1,14 @@
 import type { StatusTone } from "@/components/status-pill";
 import type { Verdict } from "./types";
 
-// 기대 득점 격차(추천 − 실제의 절댓값)를 게이지 가득참으로 매핑하는 스케일.
-// score-duel.tsx의 GAP_FULL_SCALE와 같은 의도의 상수(둘 다 0.15 RE)지만,
-// 그 컴포넌트의 로컬 상수와의 결합을 피하려고 여기서 독립적으로 정의한다.
+// Scale that maps the expected-run gap (|recommended − actual|) to a full gauge.
+// Same intent as score-duel.tsx's GAP_FULL_SCALE (both represent 0.15 RE),
+// but defined independently here to avoid coupling to that component's local constant.
 export const VERSUS_FULL_SCALE = 0.15;
 
 /**
- * 0–1로 정규화한 AI 우세 게이지 채움 비율(격차의 크기만, 방향은 무시).
- * score_gap = 실제 − 추천 이므로 절댓값을 쓴다.
+ * AI-edge gauge fill ratio normalised to 0–1 (magnitude only, direction ignored).
+ * score_gap = actual − recommended, so we take the absolute value.
  */
 export function aiEdgeFraction(scoreGap: number): number {
   return Math.min(Math.abs(scoreGap) / VERSUS_FULL_SCALE, 1);
@@ -19,9 +19,10 @@ export interface DuelNarrative {
   tone: StatusTone;
 }
 
-// 판정 서사: 추천 라인업은 최적화 산물이라 기대 득점이 항상 실제 이상이다.
-// 따라서 '누가 이겼나'가 아니라 감독의 라인업이 AI 최적안에 얼마나 근접했는지를
-// 기존 verdict로 전한다(격차가 작을수록 감독 선전).
+// Verdict narrative: the recommended lineup is an optimisation product, so its
+// expected run value is always >= the actual lineup's. Rather than framing this as
+// "who won", we use the existing verdict to convey how close the manager's lineup
+// came to the AI optimum (smaller gap = manager performed better).
 const _DUEL_BY_VERDICT: Record<Verdict, DuelNarrative> = {
   "Nearly optimal": { resultKo: "막상막하 — 감독 선전", tone: "good" },
   Acceptable: { resultKo: "감독 선방", tone: "good" },

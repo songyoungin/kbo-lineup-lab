@@ -3,14 +3,16 @@ import { StatusPill } from "@/components/status-pill";
 import { aiEdgeFraction, duelNarrative } from "@/lib/versus";
 import type { PregameResponse } from "@/lib/types";
 
-// 쐐기 최소 가시 폭 — 아주 작은 격차도 방향이 읽히도록.
+// Minimum visible wedge width — ensures direction is readable even for tiny gaps.
 const MIN_WEDGE_PCT = 1.5;
 
 /**
- * "🤖 AI vs 🧢 감독" 대결 히어로 배너.
- * 양 코너에 추천/실제 라인업의 기대 득점을 마주 세우고, 중앙 게이지가 앞선 쪽으로
- * 뻗어 격차의 방향·크기를 보여준다. 추천은 최적화 산물이라 보통 AI가 앞서므로,
- * 판정 문구(duelNarrative)는 '감독이 얼마나 근접했나'를 verdict로 전한다.
+ * "🤖 AI vs 🧢 감독" duel hero banner.
+ * Displays the expected run values of the recommended and actual lineups in opposite
+ * corners; a central gauge extends toward the leading side to show the gap's
+ * direction and magnitude. Since the recommended lineup is an optimisation product
+ * the AI typically leads, so the verdict label (duelNarrative) frames the result as
+ * "how close did the manager get" rather than a raw win/loss.
  */
 export function VersusHero({ pregame }: { pregame: PregameResponse }) {
   const aiLeads = pregame.recommended_score > pregame.actual_score;
@@ -23,7 +25,7 @@ export function VersusHero({ pregame }: { pregame: PregameResponse }) {
 
   return (
     <div className="rounded-md border border-rule bg-surface px-6 py-6">
-      {/* 페르소나 대결 스코어라인 */}
+      {/* Persona duel scoreline */}
       <div className="flex items-stretch justify-between gap-4">
         <div className="flex-1">
           <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-brand-600">
@@ -51,7 +53,7 @@ export function VersusHero({ pregame }: { pregame: PregameResponse }) {
         </div>
       </div>
 
-      {/* 우세 게이지 — 중앙에서 앞선 쪽으로 쐐기가 뻗는다 */}
+      {/* Edge gauge — wedge extends from centre toward the leading side */}
       <div className="relative mt-5 h-2 rounded-full bg-rule/50">
         <span
           aria-hidden
@@ -71,7 +73,7 @@ export function VersusHero({ pregame }: { pregame: PregameResponse }) {
         />
       </div>
 
-      {/* 판정 */}
+      {/* Verdict */}
       <div className="mt-4 flex items-center justify-center gap-2.5">
         <span className="text-sm font-semibold tabular-nums text-zinc-600">
           Δ {sign}
