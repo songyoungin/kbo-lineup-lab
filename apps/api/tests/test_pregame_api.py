@@ -1052,3 +1052,75 @@ def test_all_recommended_players_are_cardable(
         assert len(data["factors"]) == 5, (
             f"player_id={pid} has {len(data['factors'])} factors, expected 5"
         )
+
+
+# ---------------------------------------------------------------------------
+# POST /api/games/{id}/lineup-score  (lineup simulator)
+# ---------------------------------------------------------------------------
+
+
+def _recommended_player_ids(client: TestClient, game_id: int) -> list[int]:
+    """Read the recommended lineup's player ids in batting order from pregame."""
+    resp = client.get(f"/api/games/{game_id}/pregame")
+    assert resp.status_code == 200
+    rows = sorted(resp.json()["recommended_lineup"], key=lambda r: r["batting_order"])
+    return [int(r["player_id"]) for r in rows]
+
+
+def test_lineup_score_recommended_order_has_zero_delta(
+    client: TestClient, _game_id: int, _team_id: int, _model_version_id: int
+) -> None:
+    """Submitting the recommended order itself yields delta_vs_recommended == 0."""
+    body = _replay_body(_game_id, _team_id, _model_version_id)
+    client.post("/api/jobs/replay-evaluation", json=body)
+    ids = _recommended_player_ids(client, _game_id)
+
+    resp = client.post(f"/api/games/{_game_id}/lineup-score", json={"player_ids": ids})
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["game_id"] == _game_id
+    assert data["delta_vs_recommended"] == pytest.approx(0.0, abs=1e-9)
+    assert data["total_score"] == pytest.approx(data["recommended_total_score"], abs=1e-9)
+    assert isinstance(data["expected_runs"], float)
+
+
+def test_lineup_score_reordered_is_scored(
+    client: TestClient, _game_id: int, _team_id: int, _model_version_id: int
+) -> None:
+    """A reversed order is valid and returns a finite expected-runs score."""
+    body = _replay_body(_game_id, _team_id, _model_version_id)
+    client.post("/api/jobs/replay-evaluation", json=body)
+    ids = _recommended_player_ids(client, _game_id)
+
+    resp = client.post(
+        f"/api/games/{_game_id}/lineup-score", json={"player_ids": list(reversed(ids))}
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["expected_runs"] > 0.0
+    # total_score == expected_runs + handedness_adjustment (adjustment <= 0)
+    assert data["total_score"] == pytest.approx(
+        data["expected_runs"] + data["handedness_adjustment"], abs=1e-9
+    )
+
+
+def test_lineup_score_rejects_non_permutation(
+    client: TestClient, _game_id: int, _team_id: int, _model_version_id: int
+) -> None:
+    """A player-id set that is not a permutation of the recommended lineup is 422."""
+    body = _replay_body(_game_id, _team_id, _model_version_id)
+    client.post("/api/jobs/replay-evaluation", json=body)
+    ids = _recommended_player_ids(client, _game_id)
+
+    # Drop one and duplicate another → same length, wrong set
+    bad = ids[:-1] + [ids[0]]
+    resp = client.post(f"/api/games/{_game_id}/lineup-score", json={"player_ids": bad})
+    assert resp.status_code == 422
+
+
+def test_lineup_score_unknown_game_returns_404(
+    client: TestClient, _game_id: int, _team_id: int, _model_version_id: int
+) -> None:
+    """Scoring an order for a game with no completed run / missing game is 404."""
+    resp = client.post("/api/games/999999/lineup-score", json={"player_ids": [1, 2, 3]})
+    assert resp.status_code == 404

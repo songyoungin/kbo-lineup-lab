@@ -312,6 +312,46 @@ class PlayerScoreCardResponse(BaseModel):
 
 
 # ---------------------------------------------------------------------------
+# Lineup simulator schemas (score an arbitrary batting order; read-only)
+# ---------------------------------------------------------------------------
+
+
+class LineupScoreRequest(BaseModel):
+    """Body for POST /api/games/{game_id}/lineup-score.
+
+    player_ids is the desired batting order (slot 1 first). It must be a
+    permutation of the game's recommended-lineup player ids — same nine
+    players, any order. Each player keeps the defensive position assigned in
+    the recommended lineup.
+    """
+
+    player_ids: list[int]
+
+
+class LineupScoreResponse(BaseModel):
+    """Response for POST /api/games/{game_id}/lineup-score.
+
+    All scores are raw run-expectancy values from compute_lineup_score (no
+    opponent-pitcher multiplier), so the simulator is internally consistent and
+    its baseline may differ slightly from the multiplied pregame headline.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    game_id: int
+    # Raw Markov expected runs of the submitted order
+    expected_runs: float
+    # Handedness-streak penalty applied to the submitted order (<= 0)
+    handedness_adjustment: float
+    # expected_runs + handedness_adjustment
+    total_score: float
+    # Recommended order scored the same raw way (the what-if baseline)
+    recommended_total_score: float
+    # total_score - recommended_total_score (positive = better than recommended)
+    delta_vs_recommended: float
+
+
+# ---------------------------------------------------------------------------
 # Job schemas
 # ---------------------------------------------------------------------------
 

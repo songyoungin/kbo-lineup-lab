@@ -6,6 +6,8 @@ from app.api.deps import SessionDep
 from app.schemas.postgame import PostgameResponse
 from app.schemas.pregame import (
     LineupComparisonResponse,
+    LineupScoreRequest,
+    LineupScoreResponse,
     PlayerComparisonResponse,
     PlayerScoreCardResponse,
     PregameResponse,
@@ -16,6 +18,7 @@ from app.services.pregame_views import (
     build_player_comparison,
     build_player_score_card,
     build_pregame_view,
+    score_custom_batting_order,
 )
 
 router = APIRouter()
@@ -56,3 +59,13 @@ def compare_players(
 def player_score_card(game_id: int, player_id: int, session: SessionDep) -> PlayerScoreCardResponse:
     """Return the display score card (radar factors + OVR) for one player."""
     return build_player_score_card(session, game_id, player_id)
+
+
+@router.post("/{game_id}/lineup-score", response_model=LineupScoreResponse)
+def lineup_score(
+    game_id: int,
+    req: LineupScoreRequest,
+    session: SessionDep,
+) -> LineupScoreResponse:
+    """Score a user-supplied batting order (simulator) via the deterministic model."""
+    return score_custom_batting_order(session, game_id, req.player_ids)
